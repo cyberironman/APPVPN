@@ -1,0 +1,56 @@
+{
+  "version": "2026-10-26.1",
+  "updated": "2026-10-26",
+  "note": "进程级清单：命中即认为「这类软件需要走代理」。exe 为空表示只有网页版（由浏览器那条规则覆盖），只作说明展示。",
+  "sources": [
+    "公开的域名级封锁清单（如 gfwlist）反向映射到官方桌面客户端",
+    "各服务官方帮助中心「支持的国家/地区」页面",
+    "本项目实测：同一台机器、同一条线路，逐个客户端验证连通性"
+  ],
+  "groups": {
+    "浏览器与 Google": "Google 账号同步、搜索、扩展商店、云端硬盘",
+    "AI 与开发": "OpenAI / Anthropic / GitHub / 模型下载站",
+    "社交与通讯": "Meta / Telegram / Discord / Slack 系",
+    "视频与音乐": "YouTube / Netflix / Twitch / Spotify",
+    "知识与协作": "Notion / Figma / 维基 等"
+  },
+  "apps": [
+    {"exe": ["chrome.exe"], "name": "Google Chrome", "group": "浏览器与 Google", "level": "must", "why": "账号同步、Google 搜索、扩展商店"},
+    {"exe": ["msedge.exe"], "name": "Microsoft Edge", "group": "浏览器与 Google", "level": "often", "why": "Copilot 与 Google 系网站"},
+    {"exe": ["googledrivesync.exe"], "name": "Google 云端硬盘", "group": "浏览器与 Google", "level": "must", "why": "同步服务本身在墙外"},
+    {"exe": ["googleearth.exe"], "name": "Google Earth", "group": "浏览器与 Google", "level": "must", "why": "地图瓦片服务器在墙外"},
+
+    {"exe": ["chatgpt.exe"], "name": "ChatGPT 桌面版", "group": "AI 与开发", "level": "must", "why": "OpenAI 不对中国大陆开放"},
+    {"exe": ["codex.exe"], "name": "OpenAI Codex CLI", "group": "AI 与开发", "level": "must", "why": "调用 OpenAI 接口"},
+    {"exe": ["claude.exe"], "name": "Claude 桌面版", "group": "AI 与开发", "level": "must", "why": "Anthropic 不对中国大陆开放"},
+    {"exe": ["cursor.exe"], "name": "Cursor", "group": "AI 与开发", "level": "must", "why": "AI 补全与账号服务"},
+    {"exe": ["code.exe"], "name": "Visual Studio Code", "group": "AI 与开发", "level": "often", "why": "Copilot 与扩展市场"},
+    {"exe": ["githubdesktop.exe"], "name": "GitHub Desktop", "group": "AI 与开发", "level": "often", "why": "GitHub 拉取时快时慢"},
+    {"exe": ["git.exe"], "name": "Git", "group": "AI 与开发", "level": "often", "why": "clone GitHub 大仓库"},
+    {"exe": ["ollama.exe", "ollama app.exe"], "name": "Ollama", "group": "AI 与开发", "level": "often", "why": "从 registry 拉模型"},
+    {"exe": ["huggingface-cli.exe", "hf.exe"], "name": "Hugging Face CLI", "group": "AI 与开发", "level": "must", "why": "模型下载站"},
+    {"exe": ["perplexity.exe"], "name": "Perplexity", "group": "AI 与开发", "level": "must", "why": "AI 搜索服务"},
+
+    {"exe": ["telegram.exe"], "name": "Telegram", "group": "社交与通讯", "level": "must", "why": "服务器在墙外"},
+    {"exe": ["discord.exe", "update.exe"], "name": "Discord", "group": "社交与通讯", "level": "must", "why": "更新 server 与语音节点都在墙外"},
+    {"exe": ["whatsapp.exe"], "name": "WhatsApp", "group": "社交与通讯", "level": "must", "why": "Meta 服务"},
+    {"exe": ["messenger.exe"], "name": "Messenger", "group": "社交与通讯", "level": "must", "why": "Meta 服务"},
+    {"exe": ["slack.exe"], "name": "Slack", "group": "社交与通讯", "level": "must", "why": "工作区在墙外"},
+    {"exe": ["signal.exe"], "name": "Signal", "group": "社交与通讯", "level": "must", "why": "服务器在墙外"},
+    {"exe": [], "name": "Facebook", "group": "社交与通讯", "level": "must", "why": "只有网页版，用浏览器那条规则即可", "web": ["facebook.com"]},
+    {"exe": [], "name": "Instagram", "group": "社交与通讯", "level": "must", "why": "只有网页版", "web": ["instagram.com"]},
+    {"exe": [], "name": "X（推特）", "group": "社交与通讯", "level": "must", "why": "只有网页版", "web": ["x.com", "twitter.com"]},
+    {"exe": [], "name": "Reddit", "group": "社交与通讯", "level": "must", "why": "只有网页版", "web": ["reddit.com"]},
+
+    {"exe": ["spotify.exe"], "name": "Spotify", "group": "视频与音乐", "level": "must", "why": "不对中国大陆开放"},
+    {"exe": [], "name": "YouTube", "group": "视频与音乐", "level": "must", "why": "网页版；浏览器走代理即可", "web": ["youtube.com", "googlevideo.com"]},
+    {"exe": [], "name": "Netflix", "group": "视频与音乐", "level": "must", "why": "网页版；地区限制", "web": ["netflix.com"]},
+    {"exe": [], "name": "Twitch", "group": "视频与音乐", "level": "must", "why": "网页版", "web": ["twitch.tv"]},
+
+    {"exe": ["notion.exe"], "name": "Notion", "group": "知识与协作", "level": "must", "why": "服务在墙外，桌面版同样"},
+    {"exe": ["dropbox.exe"], "name": "Dropbox", "group": "知识与协作", "level": "must", "why": "同步服务在墙外"},
+    {"exe": [], "name": "Figma / 维基百科", "group": "知识与协作", "level": "often", "why": "网页版", "web": ["figma.com", "wikipedia.org"]},
+
+    {"exe": ["steam.exe"], "name": "Steam", "group": "游戏平台", "level": "often", "why": "商店与社区页面常被墙，下载游戏不一定需要"}
+  ]
+}

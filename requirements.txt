@@ -1,0 +1,17 @@
+# 运行必需
+fastapi>=0.110
+uvicorn>=0.27
+pydantic>=2.5
+pillow>=10.0
+pystray>=0.19
+psutil>=5.9
+
+# 系统集成（读开始菜单快捷方式、生成 .lnk）
+pywin32>=306
+pylnk3>=0.4
+
+# 可选：--native 原生窗口（默认走 Chrome/Edge 的 --app 窗口，不需要它）
+# pywebview>=5.0
+
+# 开发/测试
+pytest>=8.0

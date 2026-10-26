@@ -1,0 +1,281 @@
+# -*- coding: utf-8 -*-
+"""内核池：按「有没有软件在用」决定内核的生死。
+
+本产品与全局代理软件的分水岭
+    全局代理：内核常驻，系统里一套设置，所有程序共享 —— 想换只能整体换。
+    本产品：内核是**按需的**。软件 A 要用才拉起它那条线路，软件 A 关掉、
+    而且没别的软件在用同一条线路，内核就自己退场。整机不设代理也行。
+
+三条硬规则
+    1. 启动路径上**绝不做测速**。测速是独立的后台任务，慢也只慢自己，
+       不拖累任何软件的启动。冷启动内核实测约 1 秒，用户可接受。
+    2. 只有「登记为本产品为档案拉的」内核才会被自动回收。
+       用户手动起的线路（比如要给系统代理用）不受 GC 影响。
+    3. 判活靠进程，不靠内存里的计数器 —— 主界面关掉再打开、托盘重启，
+       判断依然正确。
+"""
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+from . import coreproc, procwatch, settings, singconf, subscription, xrayconf
+from .models import Line
+from .profiles import AppProfile, ProfileStore
+from .registry import Registry
+
+
+# --------------------------------------------------------------------------- 登记表
+def _ledger_path() -> Path:
+    return settings.data_dir() / "pool.json"
+
+
+def _read_ledger() -> dict[str, Any]:
+    path = _ledger_path()
+    if not path.exists():
+        return {"lines": {}}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"lines": {}}
+    raw.setdefault("lines", {})
+    return raw
+
+
+def _write_ledger(data: dict[str, Any]) -> None:
+    path = _ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def ledger() -> dict[str, dict[str, Any]]:
+    return _read_ledger().get("lines") or {}
+
+
+def _mark(line_id: str, profile_id: str) -> None:
+    data = _read_ledger()
+    entry = data["lines"].setdefault(line_id, {"by": [], "since": int(time.time())})
+    if profile_id and profile_id not in entry["by"]:
+        entry["by"].append(profile_id)
+    _write_ledger(data)
+
+
+def _unmark(line_id: str, profile_id: str = "", drop: bool = False) -> None:
+    data = _read_ledger()
+    entry = data["lines"].get(line_id)
+    if entry is None:
+        return
+    if drop:
+        data["lines"].pop(line_id, None)
+    elif profile_id:
+        entry["by"] = [x for x in entry["by"] if x != profile_id]
+        # 最后一个使用者走了，登记也一起撤掉
+        if not entry["by"]:
+            data["lines"].pop(line_id, None)
+    _write_ledger(data)
+
+
+# --------------------------------------------------------------------------- 起内核
+def ensure_core(reg: Registry, line: Line, *, wait: float = 12.0,
+                allow_fetch: bool = True) -> str:
+    """保证这条线路的端口在监听。**不测速**，只用已有节点快照。
+
+    无配置时用上一次拉到的节点直接生成（秒级）；连节点快照都没有，
+    才同步拉一次订阅（首次使用的一次性代价）。
+    """
+    if coreproc.port_open(line.http_port):
+        return f"内核已在运行（端口 {line.http_port}）"
+
+    binary = reg.binary(line.engine)
+    if binary is None:
+        raise RuntimeError(f"找不到 {line.engine} 内核，线路 {line.id} 无法启动")
+
+    cfg = line.config_path()
+    if not cfg.exists():
+        nodes, _ = reg.load_nodes(line)
+        if not nodes and allow_fetch and line.sub_url:
+            nodes, meta = subscription.load(line.sub_url)
+            reg.save_nodes(line, nodes, meta)
+        if not nodes:
+            raise RuntimeError(f"线路 {line.id} 没有可用节点，先更新订阅")
+        data = (singconf.build(line, nodes) if line.engine.lower().startswith("sing")
+                else xrayconf.build(line, nodes))
+        xrayconf.write(data, cfg)
+
+    h = coreproc.start(binary, cfg, line.http_port, wait=wait)
+    return f"内核已启动（端口 {line.http_port}，PID {h.pid}）"
+
+
+def start_for_profile(reg: Registry, profile: AppProfile) -> str:
+    """给一个档案准备代理。直连档案不需要内核。"""
+    if not profile.line_id:
+        return "直连档案，不需要内核"
+    line = reg.get(profile.line_id)
+    if line is None:
+        raise RuntimeError(f"档案 {profile.id} 绑定的线路 {profile.line_id} 不存在")
+    msg = ensure_core(reg, line)
+    _mark(line.id, profile.id)
+    return msg
+
+
+# --------------------------------------------------------------------------- 回收
+def stop_line(line: Line) -> int:
+    n = coreproc.stop(line.config_path())
+    _unmark(line.id, drop=True)
+    return n
+
+
+def users_of(line_id: str, profiles: list[AppProfile]) -> list[AppProfile]:
+    return [p for p in profiles if p.line_id == line_id]
+
+
+# 宽限期：刚登记的内核先留着。
+# 程序从 Popen 到真的出现在进程表里有一两秒空档，这段空档不能让 GC 误判成"没人用"。
+GRACE_SECONDS = 60.0
+
+
+def gc(reg: Registry | None = None, store: ProfileStore | None = None,
+       *, snap: procwatch.Snapshot | None = None) -> list[dict[str, Any]]:
+    """回收「本产品为档案拉起、但已没人用」的内核。返回回收动作列表。
+
+    只碰登记过的线路；用户手动启动的线路一律不动。
+    """
+    reg = reg or Registry().load()
+    store = store or ProfileStore().load()
+    marked = ledger()
+    if not marked:
+        return []
+
+    snap = snap or procwatch.snapshot()
+    alive = procwatch.alive_map(store.profiles, snap)
+    now = time.time()
+    done: list[dict[str, Any]] = []
+
+    for line_id in list(marked):
+        line = reg.get(line_id)
+        if line is None:                       # 线路被删了，登记也清掉
+            _unmark(line_id, drop=True)
+            continue
+        if now - float(marked[line_id].get("since") or 0) < GRACE_SECONDS:
+            continue                            # 刚起来，先别动
+        users = users_of(line_id, store.profiles)
+        if any(alive.get(p.id) for p in users):
+            continue                            # 还有软件在用，保留
+        n = coreproc.stop(line.config_path())
+        _unmark(line_id, drop=True)
+        done.append({"line": line_id, "stopped": n, "port": line.http_port})
+    return done
+
+
+# --------------------------------------------------------------------------- 关闭
+def release(reg: Registry, store: ProfileStore, profile: AppProfile,
+            *, force: bool = False) -> str:
+    """一个档案不再需要代理：撤掉它的登记，没人用了就停内核。
+
+    这是「关闭按钮」的后半段。前半段（结束程序）在 close_profile 里。
+    """
+    if not profile.line_id:
+        return "直连档案，无需处理"
+    line = reg.get(profile.line_id)
+    if line is None:
+        _unmark(profile.line_id, profile.id)
+        return "绑定的线路已不存在"
+
+    snap = procwatch.snapshot()
+    others = [p for p in store.profiles
+              if p.line_id == line.id and p.id != profile.id and snap.alive(p)]
+    _unmark(line.id, profile.id)
+
+    if others and not force:
+        return f"仍有 {len(others)} 个软件在用 {line.name}，内核保留"
+    n = coreproc.stop(line.config_path())
+    _unmark(line.id, drop=True)
+    return f"{line.name} 已停止（结束 {n} 个内核进程）"
+
+
+def close_profile(reg: Registry, store: ProfileStore, profile: AppProfile) -> dict[str, Any]:
+    """「关闭这个软件」：结束它的进程，再让它那条线路按需收摊。"""
+    snap = procwatch.snapshot()
+    pids = snap.pids(profile)
+    ended = 0
+    for pid in pids:
+        try:
+            import psutil
+            proc = psutil.Process(pid)
+            proc.terminate()
+            ended += 1
+        except Exception:  # noqa: BLE001  进程可能自己退了
+            continue
+    # 给它一点时间自己退，剩下的强杀
+    if ended:
+        deadline = time.time() + 4
+        while time.time() < deadline:
+            left = procwatch.snapshot().pids(profile)
+            if not left:
+                break
+            time.sleep(0.25)
+        for pid in procwatch.snapshot().pids(profile):
+            try:
+                import psutil
+                psutil.Process(pid).kill()
+            except Exception:  # noqa: BLE001
+                continue
+
+    msg = release(reg, store, profile)
+    return {"ended": ended, "message": msg}
+
+
+# --------------------------------------------------------------------------- 状态快照
+def state(reg: Registry | None = None, store: ProfileStore | None = None) -> dict[str, Any]:
+    """给界面用的一份完整快照：线路、档案、内核、登记。"""
+    reg = reg or Registry().load()
+    store = store or ProfileStore().load()
+    snap = procwatch.snapshot()
+    marked = ledger()
+
+    lines = []
+    for line in reg.lines:
+        up = coreproc.port_open(line.http_port)
+        users = users_of(line.id, store.profiles)
+        running_users = [p.id for p in users if snap.alive(p)]
+        lines.append({
+            "id": line.id,
+            "name": line.name,
+            "engine": line.engine,
+            "mode": line.mode,
+            "http_port": line.http_port,
+            "socks_port": line.socks_port,
+            "running": up,
+            "config_exists": line.config_path().exists(),
+            "users": [p.id for p in users],
+            "alive_users": running_users,
+            "auto": line.id in marked,
+        })
+
+    profiles = []
+    for p in store.profiles:
+        line = reg.get(p.line_id) if p.line_id else None
+        profiles.append({
+            "id": p.id,
+            "name": p.name,
+            "exe": p.exe,
+            "line_id": p.line_id,
+            "line_name": line.name if line else ("直连" if not p.line_id else p.line_id),
+            "kind": p.resolved_kind,
+            "proxy": f"127.0.0.1:{line.http_port}" if line and line.http_port else "",
+            "alive": snap.alive(p),
+            "icon": p.icon_path().exists(),
+            "url": p.url,
+            "data_dir": str(p.data_path()),
+        })
+
+    return {
+        "lines": lines,
+        "profiles": profiles,
+        "kernel_running": [l["id"] for l in lines if l["running"]],
+        "lease": marked,
+        "ts": int(time.time()),
+    }

@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>分应用代理管家</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+:root{
+  --bg:#f4f4f7; --side:#ebebf0; --card:#fff; --text:#18181b; --muted:#8a8a93;
+  --line:#e4e4ea; --green:#07c160; --green-d:#06a854; --red:#fa5151;
+  --blue:#2b6de5; --amber:#e8a60c; --hover:#e2e2e8; --sel:#d9d9e2;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font:13px/1.5 "Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif;
+  color:var(--text); background:var(--bg); overflow:hidden;
+  -webkit-font-smoothing:antialiased; user-select:none;
+}
+button{font:inherit;cursor:pointer;border:0;background:none;color:inherit}
+code{font-family:"Cascadia Mono",Consolas,monospace;font-size:11.5px}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#c9c9d2;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#b4b4c0}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- 骨架 ---------- */
+.app{display:flex;height:100vh}
+.side{width:272px;flex:0 0 272px;background:var(--side);display:flex;flex-direction:column;
+  border-right:1px solid var(--line)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--card)}
+
+/* ---------- 左侧 ---------- */
+.side-head{height:56px;display:flex;align-items:center;gap:8px;padding:0 14px;flex:0 0 auto}
+.brand{font-size:14px;font-weight:600;letter-spacing:.2px;flex:1;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot-live{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:0 0 auto}
+.dot-live.on{background:var(--green);box-shadow:0 0 0 3px rgba(7,193,96,.16)}
+.icon-btn{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;
+  font-size:17px;line-height:1;color:var(--muted);flex:0 0 auto}
+.icon-btn:hover{background:var(--hover);color:var(--text)}
+.search{padding:0 12px 8px;flex:0 0 auto}
+.search input{width:100%;height:28px;border-radius:7px;border:1px solid transparent;
+  background:#f7f7fa;padding:0 10px;font:inherit;font-size:12.5px;color:var(--text);outline:none}
+.search input:focus{background:#fff;border-color:#cfcfda}
+.search input::placeholder{color:#a6a6b0}
+
+.list{flex:1;overflow-y:auto;padding:0 8px 8px}
+.item{display:flex;gap:10px;align-items:center;padding:9px 9px;border-radius:9px;
+  cursor:pointer;position:relative}
+.item:hover{background:var(--hover)}
+.item.sel{background:var(--sel)}
+.item.sel::before{content:"";position:absolute;left:-8px;top:50%;transform:translateY(-50%);
+  width:3px;height:22px;border-radius:0 3px 3px 0;background:var(--green)}
+.avatar{position:relative;width:34px;height:34px;border-radius:9px;flex:0 0 auto;
+  background:#dfe3ec;overflow:hidden}
+.avatar .ph{position:absolute;inset:0;display:grid;place-items:center;
+  font-weight:600;color:#5a6478;font-size:14px}
+.avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.item-body{min-width:0;flex:1}
+.item-name{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.item-sub{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;margin-top:1px}
+.pip{width:7px;height:7px;border-radius:50%;background:#c2c2cc;flex:0 0 auto;margin-left:2px}
+.pip.on{background:var(--green)}
+.empty-side{padding:28px 16px;color:var(--muted);font-size:12px;text-align:center;line-height:1.9}
+
+.side-foot{flex:0 0 auto;border-top:1px solid var(--line);padding:9px 12px;
+  display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted)}
+.side-foot .sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btn-mini{height:24px;padding:0 9px;border-radius:6px;background:#fff;border:1px solid var(--line);
+  font-size:11.5px;color:#4a4a56}
+.btn-mini:hover{border-color:#c8c8d4;background:#fafafd}
+
+/* 设置入口（主）：像微信左下角的「设置」那样一直看得见 */
+.entry-settings{flex:0 0 auto;display:flex;align-items:center;gap:9px;width:100%;
+  padding:11px 14px;border-top:1px solid var(--line);font-size:13px;color:#3c3c48;
+  background:transparent;text-align:left}
+.entry-settings:hover{background:var(--hover)}
+.entry-settings.on{background:var(--sel);color:#18181b;font-weight:600}
+.entry-settings svg{flex:0 0 auto;color:#7c7c88}
+.entry-settings.on svg{color:var(--green-d)}
+.entry-settings .lbl{flex:1;min-width:0}
+.entry-settings .chev{color:#b6b6c2}
+
+/* ---------- 右侧 ---------- */
+.scroll{flex:1;overflow-y:auto;padding:0 0 24px}
+.d-head{display:flex;gap:14px;align-items:flex-start;padding:22px 26px 18px}
+.d-head .avatar{width:54px;height:54px;border-radius:13px;font-size:21px}
+.d-title h1{font-size:17px;font-weight:600;line-height:1.35}
+.d-title p{font-size:12px;color:var(--muted);margin-top:3px}
+.d-actions{margin-left:auto;display:flex;gap:8px;flex:0 0 auto;align-items:center}
+.btn{height:32px;padding:0 16px;border-radius:8px;font-size:13px;font-weight:500;
+  display:inline-flex;align-items:center;gap:6px;transition:.12s}
+.btn-primary{background:var(--green);color:#fff}
+.btn-primary:hover{background:var(--green-d)}
+.btn-ghost{background:#f2f2f6;color:#3c3c48}
+.btn-ghost:hover{background:#e8e8ef}
+.btn-danger{background:#fdecec;color:var(--red)}
+.btn-danger:hover{background:#fbdada}
+.btn:disabled{opacity:.42;cursor:not-allowed;background:#eee;color:#9a9aa4}
+.btn-sm{height:26px;padding:0 11px;font-size:12px;border-radius:6px}
+.spin{width:12px;height:12px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;
+  border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+.badge{display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 9px;
+  border-radius:11px;font-size:11.5px;font-weight:500;background:#f0f0f4;color:#6a6a76}
+.badge i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+.badge.on{background:#e6f8ee;color:var(--green-d)}
+.badge.off{background:#f0f0f4;color:#8a8a93}
+.badge.warn{background:#fdf3e0;color:#a97a05}
+
+.sec{padding:0 26px;margin-top:6px}
+.sec-title{font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.6px;
+  text-transform:uppercase;margin:16px 0 8px}
+.rows{background:#fafafd;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:10px 14px;font-size:12.5px;
+  border-top:1px solid var(--line);min-height:42px}
+.row:first-child{border-top:0}
+.row>label{width:82px;flex:0 0 82px;color:var(--muted);font-size:12px}
+.row .val{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .val code{color:#3d3d49;background:#eef0f5;padding:2px 6px;border-radius:4px;
+  display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+select{font:inherit;font-size:12.5px;height:27px;border-radius:6px;border:1px solid #d8d8e2;
+  background:#fff;padding:0 6px;color:var(--text);outline:none;width:100%;max-width:320px}
+select:focus{border-color:var(--blue)}
+
+.kernel{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;
+  background:#fafafd;border:1px solid var(--line);font-size:12.5px}
+.kernel+.kernel{margin-top:7px}
+.kernel .name{font-weight:500}
+.kernel .meta{color:var(--muted);font-size:11.5px}
+.kernel .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.logbox{background:#1f2126;border-radius:10px;padding:11px 13px;max-height:150px;
+  overflow:auto;margin-top:4px}
+.logbox pre{color:#c6cbd4;font-family:"Cascadia Mono",Consolas,monospace;font-size:11px;
+  line-height:1.65;white-space:pre-wrap;word-break:break-all;user-select:text}
+
+/* ---------- 空态 ---------- */
+.blank{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:12px;color:var(--muted);padding:30px;text-align:center}
+.blank .big{font-size:38px;opacity:.32;line-height:1}
+.blank h2{font-size:14px;font-weight:600;color:#5a5a66}
+.blank p{font-size:12.5px;line-height:1.8;max-width:320px}
+
+/* ---------- 设置页 ---------- */
+.page-head{display:flex;align-items:center;gap:10px;padding:20px 26px 14px;
+  border-bottom:1px solid var(--line);flex:0 0 auto}
+.page-head h1{font-size:16px;font-weight:600;flex:1}
+.line-card{border:1px solid var(--line);border-radius:10px;padding:13px 14px;
+  background:#fafafd;margin-bottom:9px}
+.line-top{display:flex;align-items:center;gap:9px}
+.line-top .nm{font-weight:600;font-size:13px}
+.line-top .sp{flex:1}
+.line-meta{margin-top:7px;font-size:11.5px;color:var(--muted);display:flex;gap:14px;
+  flex-wrap:wrap}
+.line-acts{margin-top:10px;display:flex;gap:7px;flex-wrap:wrap}
+
+/* ---------- 程序库 ---------- */
+.approw{display:flex;align-items:center;gap:10px;padding:8px 4px;border-radius:8px}
+.approw:hover{background:#f7f7fb}
+.approw .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12.5px}
+.approw .nm small{color:var(--muted);font-size:11px;margin-left:6px}
+.grp{font-size:11px;font-weight:600;color:var(--muted);margin:14px 0 4px;letter-spacing:.5px}
+
+/* ---------- 提示条 ---------- */
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(14px);
+  background:rgba(28,28,34,.94);color:#fff;padding:9px 17px;border-radius:9px;font-size:12.5px;
+  opacity:0;pointer-events:none;transition:.22s;z-index:99;max-width:74%;text-align:center}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.taskbar{background:#eef4ff;border:1px solid #d6e4fd;color:#2b5fc7;border-radius:8px;
+  padding:8px 12px;font-size:12px;display:flex;align-items:center;gap:9px;margin-top:10px}
+.taskbar .spin{border-color:rgba(43,95,199,.3);border-top-color:#2b5fc7}
+/* ---------------- 新用户接线 ---------------- */
+.setup{max-width:620px;margin:0 auto;padding:34px 30px 30px}
+.setup h1{font-size:19px;font-weight:600;letter-spacing:.2px}
+.setup .lead{color:var(--muted);font-size:12.5px;margin-top:8px;line-height:1.8}
+.tabs{display:flex;gap:6px;margin:22px 0 14px;background:#f4f4f7;padding:4px;border-radius:9px}
+.tab{flex:1;height:30px;border-radius:7px;font-size:12.5px;color:#5c5c66;display:grid;place-items:center}
+.tab.on{background:#fff;color:var(--text);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.tab-body .hint{font-size:11.5px;color:var(--muted);line-height:1.8;margin-bottom:10px}
+.tab-body input[type=text],.tab-body input[type=number]{width:100%;height:34px;border-radius:8px;
+  border:1px solid var(--line);background:#fbfbfd;padding:0 11px;font:inherit;font-size:12.5px;outline:none}
+.tab-body input:focus{border-color:#b9c6e8;background:#fff}
+.tab-body .go{margin-top:12px;width:100%;height:34px;border-radius:8px;background:var(--green);
+  color:#fff;font-weight:600;font-size:13px}
+.tab-body .go:hover{background:var(--green-d)}
+.tab-body .go[disabled]{opacity:.6;cursor:default}
+.tab-body .err{margin-top:10px;font-size:12px;color:var(--red);line-height:1.7}
+.row2{display:flex;gap:9px}
+.row2>*{flex:1}
+.setup .foot{margin-top:24px;font-size:11.5px;color:var(--muted);line-height:1.8;
+  border-top:1px solid var(--line);padding-top:14px}
+
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="side-head">
+      <span class="dot-live" id="live"></span>
+      <div class="brand">分应用代理管家</div>
+      <button class="icon-btn" id="btn-settings-top" title="设置">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3.2"/>
+          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-add" title="添加软件">＋</button>
+    </div>
+    <div class="search"><input id="q" placeholder="搜索软件或线路" autocomplete="off"></div>
+    <div class="list" id="list"></div>
+    <div class="side-foot">
+      <span class="sum" id="sum">读取中…</span>
+    </div>
+    <button class="entry-settings" id="btn-settings" title="设置：线路 / 系统代理 / 开机自启 / 目录">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+        stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3.2"/>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+      </svg>
+      <span class="lbl">设置</span>
+      <svg class="chev" viewBox="0 0 24 24" width="13" height="13" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 6l6 6-6 6"/>
+      </svg>
+    </button>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+let S = {
+  data: null, view: "profile", sel: null, q: "",
+  apps: null, settings: null, busy: {}, iconTick: {}, lastIds: ""
+};
+
+/* ---------------- 通信 ---------------- */
+async function api(path, opt) {
+  const r = await fetch(path, Object.assign({headers:{"Content-Type":"application/json"}}, opt));
+  let body = {};
+  try { body = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+  return body;
+}
+function toast(msg, ms = 2600) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove("show"), ms);
+}
+function busy(key, on) {
+  if (on) S.busy[key] = true; else delete S.busy[key];
+  paintDetail();
+}
+
+/* ---------------- 渲染：左侧 ---------------- */
+function avatar(id, name, cls) {
+  const ch = (name || "?").trim().charAt(0).toUpperCase();
+  const tick = S.iconTick[id] || 0;
+  return `<div class="avatar ${cls || ""}">
+    <span class="ph">${esc(ch)}</span>
+    <img src="/api/icon/${encodeURIComponent(id)}?t=${tick}" alt=""
+      onload="this.style.display='block';this.parentNode.querySelector('.ph').style.display='none'"
+      onerror="this.remove()" style="display:none">
+  </div>`;
+}
+
+function visibleProfiles() {
+  const list = (S.data && S.data.profiles) || [];
+  const q = S.q.trim().toLowerCase();
+  if (!q) return list;
+  return list.filter(p => (p.name + " " + p.line_name + " " + p.id).toLowerCase().includes(q));
+}
+
+function renderList() {
+  const box = $("#list");
+  const items = visibleProfiles();
+  if (!items.length) {
+    box.innerHTML = `<div class="empty-side">
+      ${(S.data && S.data.profiles.length) ? "没有匹配的软件" :
+        "还没有软件档案<br>点右上角 ＋ 从已安装程序里挑一个"}
+    </div>`;
+    return;
+  }
+  box.innerHTML = items.map(p => `
+    <div class="item ${p.id === S.sel ? "sel" : ""}" data-id="${esc(p.id)}">
+      ${avatar(p.id, p.name)}
+      <div class="item-body">
+        <div class="item-name">${esc(p.name)}</div>
+        <div class="item-sub">${esc(p.line_name)}${p.proxy ? " · " + esc(p.proxy) : ""}</div>
+      </div>
+      <span class="pip ${p.alive ? "on" : ""}"></span>
+    </div>`).join("");
+  box.querySelectorAll(".item").forEach(el => {
+    el.onclick = () => { S.sel = el.dataset.id; S.view = "profile"; renderAll(); };
+  });
+}
+
+function paintListState() {
+  const items = visibleProfiles();
+  const nodes = document.querySelectorAll("#list .item");
+  if (nodes.length !== items.length) { renderList(); return; }
+  nodes.forEach((el, i) => {
+    const p = items[i];
+    el.classList.toggle("sel", p.id === S.sel);
+    const pip = el.querySelector(".pip");
+    if (pip) pip.classList.toggle("on", !!p.alive);
+  });
+}
+
+/* ---------------- 渲染：右侧 ---------------- */
+function currentProfile() {
+  return ((S.data && S.data.profiles) || []).find(p => p.id === S.sel) || null;
+}
+
+function renderMain() {
+  const m = $("#main");
+  if (!S.data) { m.innerHTML = `<div class="blank"><div class="big">◌</div><p>正在连接…</p></div>`; return; }
+  if (S.data.needs_setup && S.view !== "settings") { m.innerHTML = viewSetup(); bindSetup(); return; }
+  if (S.view === "settings") { m.innerHTML = viewSettings(); bindSettings(); return; }
+  if (S.view === "apps") { m.innerHTML = viewApps(); bindApps(); return; }
+
+  const p = currentProfile();
+  if (!p) {
+    const n = S.data.profiles.length;
+    m.innerHTML = `<div class="blank">
+      <div class="big">◎</div>
+      <h2>${n ? "选一个软件看详情" : "还没有软件档案"}</h2>
+      <p>${n ? "左边点一下就切过去了。" :
+        "一个档案 = 一个程序 + 一条线路 + 一份独立数据目录。同一个程序可以建多个档案，各走各的代理，图标也不一样。"}</p>
+    </div>`;
+    return;
+  }
+  const line = (S.data.lines || []).find(l => l.id === p.line_id) || null;
+  const isBusy = !!S.busy["start:" + p.id];
+  const isStop = !!S.busy["stop:" + p.id];
+
+  m.innerHTML = `
+  <div class="scroll">
+    <div class="d-head">
+      ${avatar(p.id, p.name)}
+      <div class="d-title">
+        <h1>${esc(p.name)}</h1>
+        <p>${esc(p.line_name)}${p.proxy ? " · " + esc(p.proxy) : " · 不经过代理"}</p>
+      </div>
+      <div class="d-actions">
+        <button class="btn btn-primary" id="act-start" ${p.alive || isBusy ? "disabled" : ""}>
+          ${isBusy ? '<span class="spin"></span>连接中…' : (p.alive ? "已启动" : "启动")}
+        </button>
+        <button class="btn btn-ghost" id="act-stop" ${!p.alive || isStop ? "disabled" : ""}>
+          ${isStop ? "关闭中…" : "关闭"}
+        </button>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="rows">
+        <div class="row"><label>状态</label><div class="val" id="d-status">${badgeFor(p)}</div></div>
+        <div class="row"><label>绑定线路</label><div class="val">
+          <select id="sel-line">
+            <option value="">不经过代理（直连）</option>
+            ${(S.data.lines || []).map(l => `<option value="${esc(l.id)}" ${l.id === p.line_id ? "selected" : ""}>
+              ${esc(l.name)} · ${l.http_port}${l.running ? "（内核在跑）" : ""}</option>`).join("")}
+          </select>
+        </div></div>
+        <div class="row"><label>程序</label><div class="val"><code>${esc(p.exe)}</code></div></div>
+        <div class="row"><label>数据目录</label><div class="val"><code>${esc(p.data_dir)}</code></div></div>
+        <div class="row"><label>图标</label><div class="val">
+          <button class="btn btn-ghost btn-sm" id="act-icon">重做图标与快捷方式</button>
+        </div></div>
+        <div class="row"><label>删除</label><div class="val">
+          <button class="btn btn-danger btn-sm" id="act-del">删除这个档案</button>
+          <span style="color:var(--muted);font-size:11.5px;margin-left:8px">只删档案，不动程序本身</span>
+        </div></div>
+      </div>
+
+      <div class="sec-title">代理链路</div>
+      ${line ? `<div class="kernel">
+        <span class="name">${esc(line.name)}</span>
+        <span class="meta">端口 ${line.http_port}${line.socks_port ? " / socks " + line.socks_port : ""} · ${esc(line.engine)}</span>
+        <span class="grow"></span>
+        ${line.running ? '<span class="badge on"><i></i>内核运行中</span>'
+                       : '<span class="badge off"><i></i>内核未启动</span>'}
+        <button class="btn btn-ghost btn-sm" data-line="${esc(line.id)}" data-act="${line.running ? "lstop" : "lstart"}">
+          ${line.running ? "停内核" : "起内核"}</button>
+      </div>` : `<div class="kernel" style="color:var(--muted)">
+        直连档案：启动时不连任何代理，也不占用内核。
+      </div>`}
+      ${line ? `<div style="font-size:11.5px;color:var(--muted);margin-top:7px;line-height:1.7">
+        内核是按需的：这个软件的启动才会拉起它；软件关掉、也没别的软件在用这条线路时，
+        内核会自动退场。手动在这里起的内核不会被自动停掉。
+      </div>` : ""}
+
+      <div class="sec-title">最近日志</div>
+      <div class="logbox"><pre id="d-log">读取中…</pre></div>
+    </div>
+  </div>`;
+
+  bindDetail(p);
+  loadLog();
+}
+
+function badgeFor(p) {
+  if (p.alive) return `<span class="badge on"><i></i>运行中</span>`;
+  return `<span class="badge off"><i></i>未运行</span>`;
+}
+
+function bindDetail(p) {
+  const start = $("#act-start"), stop = $("#act-stop");
+  if (start) start.onclick = () => actStart(p.id);
+  if (stop) stop.onclick = () => actStop(p.id);
+  const sl = $("#sel-line");
+  if (sl) sl.onchange = () => actLine(p.id, sl.value);
+  const ic = $("#act-icon");
+  if (ic) ic.onclick = () => actIcon(p.id);
+  const del = $("#act-del");
+  if (del) del.onclick = () => actDelete(p);
+  document.querySelectorAll("[data-act]").forEach(b => {
+    b.onclick = () => actKernel(b.dataset.line, b.dataset.act);
+  });
+}
+
+function paintDetail() {
+  if (S.view !== "profile") return;
+  const p = currentProfile();
+  if (!p) return;
+  const st = $("#d-status");
+  if (st) st.innerHTML = badgeFor(p);
+  const start = $("#act-start"), stop = $("#act-stop");
+  if (start) {
+    start.disabled = p.alive || !!S.busy["start:" + p.id];
+    start.innerHTML = S.busy["start:" + p.id] ? '<span class="spin"></span>连接中…'
+                      : (p.alive ? "已启动" : "启动");
+  }
+  if (stop) {
+    stop.disabled = !p.alive || !!S.busy["stop:" + p.id];
+    stop.textContent = S.busy["stop:" + p.id] ? "关闭中…" : "关闭";
+  }
+}
+
+/* ---------------- 详情动作 ---------------- */
+async function actStart(id) {
+  busy("start:" + id, true);
+  try {
+    const r = await api(`/api/profile/${encodeURIComponent(id)}/start`, {method:"POST"});
+    toast(r.message || "已启动");
+  } catch (e) { toast("启动失败：" + e.message, 5000); }
+  finally { busy("start:" + id, false); await refresh(true); }
+}
+async function actStop(id) {
+  busy("stop:" + id, true);
+  try {
+    const r = await api(`/api/profile/${encodeURIComponent(id)}/stop`, {method:"POST"});
+    toast(r.message || "已关闭", 3600);
+  } catch (e) { toast("关闭失败：" + e.message, 5000); }
+  finally { busy("stop:" + id, false); await refresh(true); }
+}
+async function actLine(id, lineId) {
+  try {
+    const r = await api(`/api/profile/${encodeURIComponent(id)}/line`,
+      {method:"POST", body: JSON.stringify({line_id: lineId})});
+    S.iconTick[id] = Date.now();
+    toast(r.message);
+  } catch (e) { toast("改线路失败：" + e.message, 5000); }
+  await refresh(true);
+}
+async function actIcon(id) {
+  try {
+    const r = await api(`/api/profile/${encodeURIComponent(id)}/icon`, {method:"POST"});
+    S.iconTick[id] = Date.now();
+    toast(r.message);
+  } catch (e) { toast("重做失败：" + e.message, 5000); }
+  await refresh(true);
+}
+async function actDelete(p) {
+  if (!confirm(`删除档案「${p.name}」？\n\n只删这个档案和它桌面上的快捷方式，程序本身不动。`)) return;
+  try {
+    const r = await api(`/api/profile/${encodeURIComponent(p.id)}`, {method:"DELETE"});
+    S.sel = null;
+    toast(r.message);
+  } catch (e) { toast("删除失败：" + e.message, 5000); }
+  await refresh(true);
+}
+async function actKernel(lineId, act) {
+  try {
+    const r = await api(`/api/line/${encodeURIComponent(lineId)}/${act === "lstop" ? "stop" : "start"}`,
+      {method:"POST"});
+    toast(r.message);
+  } catch (e) { toast(e.message, 5000); }
+  await refresh(true);
+}
+async function loadLog() {
+  try {
+    const r = await api("/api/logs?lines=40");
+    const el = $("#d-log");
+    if (el) el.textContent = r.text || "（空）";
+  } catch (e) {}
+}
+
+/* ---------------- 程序库视图 ---------------- */
+function viewApps() {
+  if (!S.apps) return `<div class="blank"><div class="spin" style="border-color:#ddd;border-top-color:#2b6de5;width:20px;height:20px"></div><p>正在读取程序列表…</p></div>`;
+  const have = new Set(S.apps.have || []);
+  const lines = S.data.lines || [];
+  const groups = {};
+  (S.apps.items || []).forEach(it => (groups[it.group] = groups[it.group] || []).push(it));
+  const order = ["浏览器","通讯","开发","办公","影音","工具","游戏","其他"];
+  const keys = Object.keys(groups).sort((a,b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, "zh");
+  });
+  return `
+  <div class="page-head">
+    <h1>从已安装程序添加</h1>
+    <button class="btn btn-ghost btn-sm" id="do-scan">重新扫描</button>
+    <button class="btn btn-ghost btn-sm" id="back">返回</button>
+  </div>
+  <div class="scroll" style="padding:14px 26px 0">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span style="font-size:12px;color:var(--muted)">新档案默认走</span>
+      <select id="new-line">
+        <option value="">直连</option>
+        ${lines.map(l => `<option value="${esc(l.id)}" ${l.id === (S.settings?.default_line || "") ? "selected" : ""}>${esc(l.name)}</option>`).join("")}
+      </select>
+      <span style="font-size:11.5px;color:var(--muted)">加到哪个线路之后可以在详情里随时改</span>
+    </div>
+    ${keys.map(g => `
+      <div class="grp">${esc(g)} · ${groups[g].length}</div>
+      ${groups[g].slice(0, 60).map(it => `
+        <div class="approw">
+          <div class="nm">${esc(it.name)}${it.needed ? ' <span class="badge warn" title="' + esc(it.why || "") + '">需代理</span>' : ""}<small>${esc(it.exe)}</small></div>
+          ${have.has(it.exe.toLowerCase())
+            ? '<span class="badge off">已添加</span>'
+            : `<button class="btn btn-ghost btn-sm" data-add="${esc(it.exe)}" data-name="${esc(it.name)}">添加</button>`}
+        </div>`).join("")}
+    `).join("")}
+  </div>`;
+}
+function bindApps() {
+  const back = $("#back"); if (back) back.onclick = () => go("profile");
+  const nl = $("#new-line");
+  if (nl) nl.onchange = async () => {
+    try {
+      const r = await api("/api/settings/default-line", {method:"POST",
+        body: JSON.stringify({line_id: nl.value})});
+      toast(r.message);
+    } catch (e) { toast(e.message, 5000); }
+    await loadSettings();
+  };
+  const sc = $("#do-scan");
+  if (sc) sc.onclick = async () => { S.apps = null; renderMain(); await api("/api/apps/scan", {method:"POST"}); setTimeout(loadApps, 1500); };
+  document.querySelectorAll("[data-add]").forEach(b => {
+    b.onclick = async () => {
+      const line = $("#new-line")?.value || "";
+      b.disabled = true; b.textContent = "添加中…";
+      try {
+        const r = await api("/api/apps/add", {method:"POST", body: JSON.stringify({
+          exe: b.dataset.add, name: b.dataset.name, line_id: line })});
+        S.iconTick[r.id] = Date.now();
+        toast(r.message);
+        await refresh(true);
+        await loadApps();
+      } catch (e) { toast("添加失败：" + e.message, 5000); b.disabled = false; b.textContent = "添加"; }
+    };
+  });
+}
+async function loadApps() {
+  try { S.apps = await api("/api/apps"); } catch (e) { S.apps = {items:[], have:[]}; }
+  if (S.view === "apps") renderMain();
+}
+
+/* ---------------- 设置视图 ---------------- */
+/* ---------------- 新用户接线：三种方式都落到同一条线路 ---------------- */
+function viewSetup() {
+  const tab = S.setupTab || "sub";
+  const err = S.setupErr ? `<div class="err">${esc(S.setupErr)}</div>` : "";
+  const body = {
+    sub: `<div class="tab-body">
+        <div class="hint">机场 / 自建服务的订阅地址（http 或 https）。整条订阅的节点都会进来，之后自动择优。</div>
+        <input type="text" id="f-sub" placeholder="https://example.com/api/v1/client/subscribe?token=..." value="${esc(S.setupUrl || "")}" spellcheck="false">
+        <button class="go" id="go-sub">添加订阅</button>${err}</div>`,
+    uri: `<div class="tab-body">
+        <div class="hint">只有单个节点时用这个。支持 vless:// vmess:// trojan:// ss:// 开头的分享链接。</div>
+        <input type="text" id="f-uri" placeholder="vless://uuid@host:443?...#备注" value="${esc(S.setupUri || "")}" spellcheck="false">
+        <button class="go" id="go-uri">添加这个节点</button>${err}</div>`,
+    local: `<div class="tab-body">
+        <div class="hint">你机器上已经跑着 v2rayN / Clash 之类，只要把端口告诉我们。先把那个客户端打开，再点确定。</div>
+        <div class="row2" style="margin-bottom:9px">
+          <select id="f-proto" style="height:34px;border-radius:8px;border:1px solid var(--line);background:#fbfbfd;padding:0 9px;font:inherit">
+            <option value="http">HTTP 代理</option>
+            <option value="socks">SOCKS5 代理</option>
+          </select>
+          <input type="number" id="f-port" placeholder="端口，例如 10808" value="${esc(S.setupPort || "")}" min="1" max="65535">
+        </div>
+        <div class="hint">常见的：v2rayN 的 http 端口 10808、socks 端口 10809；Clash 的 7890（mixed）。</div>
+        <button class="go" id="go-local">用这个本地端口</button>${err}</div>`,
+  }[tab];
+
+  return `
+  <div class="scroll">
+  <div class="setup">
+    <h1>先告诉我：你的代理在哪？</h1>
+    <p class="lead">这个软件<b>不自带任何代理服务</b>。它做的事是「你已经有的代理，我帮你按软件分」——
+      哪个程序走代理、走哪条线路，没建过档案的程序一律直连，不偷偷接管。</p>
+    <div class="tabs">
+      <button class="tab ${tab === "sub" ? "on" : ""}" data-tab="sub">A. 订阅链接</button>
+      <button class="tab ${tab === "uri" ? "on" : ""}" data-tab="uri">B. 节点分享链接</button>
+      <button class="tab ${tab === "local" ? "on" : ""}" data-tab="local">C. 本地端口</button>
+    </div>
+    ${body}
+    <div class="foot">
+      内置了一份「明显需要代理的软件」清单（Facebook、YouTube、Chrome、Codex、Telegram…）。
+      添加软件时会自动提示哪些该挂代理 —— 但永远不会替你决定用哪条线路。
+    </div>
+  </div></div>`;
+}
+
+function bindSetup() {
+  document.querySelectorAll(".tab").forEach(el => {
+    el.onclick = () => { S.setupTab = el.dataset.tab; S.setupErr = ""; renderMain(); };
+  });
+  const keep = (id, key) => { const el = $(id); if (el) el.oninput = e => { S[key] = e.target.value; }; };
+  keep("#f-sub", "setupUrl"); keep("#f-uri", "setupUri"); keep("#f-port", "setupPort");
+
+  const submit = (btn, path, body, key) => {
+    if (!btn) return;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      const old = btn.textContent;
+      btn.textContent = "连接中…（约 2 秒）";
+      S.setupErr = "";
+      try {
+        const r = await api(path, { method: "POST", body: JSON.stringify(body()) });
+        toast(r.message || "好了", 6000);
+        S[key] = "";
+        S.setupTab = "sub";
+        await refresh(true);
+        await loadSettings();
+      } catch (e) {
+        // 失败就原地标出来：引导页不能只弹一个会自动消失的提示
+        S.setupErr = e.message;
+        renderMain();
+      } finally {
+        if (btn.isConnected) { btn.disabled = false; btn.textContent = old; }
+      }
+    };
+  };
+  submit($("#go-sub"), "/api/setup/subscribe", () => ({ url: ($("#f-sub") || {}).value || "" }), "setupUrl");
+  submit($("#go-uri"), "/api/setup/uri", () => ({ uri: ($("#f-uri") || {}).value || "" }), "setupUri");
+  submit($("#go-local"), "/api/setup/local", () => ({
+    protocol: ($("#f-proto") || {}).value || "http",
+    port: Number((($("#f-port") || {}).value) || 0),
+  }), "setupPort");
+}
+
+function viewSettings() {
+  const st = S.settings;
+  if (!st) return `<div class="blank"><p>正在读取设置…</p></div>`;
+  const sp = st.sysproxy || {};
+  const au = st.autostart || {};
+  const tn = st.tun || {};
+  const lines = st.lines || [];
+  const dl = st.default_line || "";
+  return `
+  <div class="page-head">
+    <h1>设置</h1>
+    <button class="btn btn-ghost btn-sm" id="back">返回</button>
+  </div>
+  <div class="scroll" style="padding:0 26px 26px">
+    <div style="font-size:11.5px;color:var(--muted);padding-top:10px">
+      这一页就是托盘右键菜单里的「设置…」，两处进来看到的是同一份东西。
+    </div>
+
+    <div class="sec-title">线路（每条线路 = 一个订阅 + 一个本地端口 + 一个内核进程）</div>
+    ${lines.length ? lines.map(l => {
+      const live = (S.data.lines || []).find(x => x.id === l.id) || {};
+      return `<div class="line-card">
+        <div class="line-top">
+          <span class="nm">${esc(l.name)}</span>
+          <span class="badge ${live.running ? "on" : "off"}"><i></i>${live.running ? "内核运行中" : "内核未启动"}</span>
+          <span class="sp"></span>
+          ${live.running
+            ? `<button class="btn btn-ghost btn-sm" data-l="${esc(l.id)}" data-a="stop">停内核</button>`
+            : `<button class="btn btn-primary btn-sm" data-l="${esc(l.id)}" data-a="start">起内核</button>`}
+          <button class="btn btn-ghost btn-sm" data-l="${esc(l.id)}" data-a="refresh">更新订阅 + 测速</button>
+        </div>
+        <div class="line-meta">
+          <span>端口 ${l.http_port}${l.socks_port ? " / socks " + l.socks_port : ""}</span>
+          <span>引擎 ${esc(l.engine)}</span>
+          <span>模式 ${esc(l.mode)}</span>
+          <span>被 ${(live.users || []).length} 个软件使用</span>
+        </div>
+        <div class="line-meta"><span style="overflow:hidden;text-overflow:ellipsis">订阅 ${esc(l.sub_url || "（无）")}</span></div>
+      </div>`;
+    }).join("") : `<div class="line-card" style="color:var(--muted)">还没有线路。用命令行 <code>add</code> 添加一条订阅。</div>`}
+
+    <div class="sec-title">系统代理</div>
+    <div class="rows">
+      <div class="row"><label>当前</label><div class="val">
+        <span class="badge ${sp.on ? "warn" : "off"}"><i></i>${esc(sp.detail || "未知")}</span>
+      </div></div>
+      <div class="row"><label>接管</label><div class="val" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="sp-line">
+          ${lines.map(l => `<option value="${esc(l.id)}">${esc(l.name)} · ${l.http_port}</option>`).join("")}
+        </select>
+        <button class="btn btn-ghost btn-sm" id="sp-on">指向这条线路</button>
+        <button class="btn btn-ghost btn-sm" id="sp-off">关闭并还原</button>
+      </div></div>
+      <div class="row" style="color:var(--muted);font-size:11.5px;display:block;line-height:1.75">
+        只改当前用户（HKCU），不需要管理员权限。开启前会备份原设置，关闭时原样还原，
+        所以不会和别的代理软件打架。本产品的正常用法是<b>不开系统代理</b>：让每个软件按档案走。
+      </div>
+    </div>
+
+    <div class="sec-title">TUN · 虚拟网卡接管（高级）</div>
+    <div class="rows">
+      <div class="row"><label>状态</label><div class="val">
+        <span class="badge ${tn.on ? "on" : "off"}"><i></i>${
+          tn.on ? "运行中" : (tn.installed ? "已停止（提权任务就绪）" : "未启用")}</span>
+      </div></div>
+      <div class="row"><label>接管</label><div class="val"
+        style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" id="tun-on" ${tn.on ? "disabled" : ""}>开启 TUN</button>
+        <button class="btn btn-ghost btn-sm" id="tun-off" ${tn.on ? "" : "disabled"}>关闭 TUN</button>
+        <span style="font-size:11.5px;color:var(--muted)">${tn.count || 0} 个程序走代理，其余直连</span>
+      </div></div>
+      <div class="row" style="color:var(--muted);font-size:11.5px;display:block;line-height:1.8">
+        给「不认代理参数」的程序兜底（游戏、部分 Electron 客户端）。会建一块虚拟网卡，
+        <b>第一次开启需要一次管理员授权</b>（装一个最高权限计划任务），之后不再弹窗。
+        开启时会自动关掉系统代理（避免绕圈），关闭时原样还原。
+      </div>
+    </div>
+
+    <div class="sec-title">通用</div>
+    <div class="rows">
+      <div class="row"><label>新档案默认</label><div class="val"
+        style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+        <select id="dl-line" style="max-width:220px">
+          <option value="" ${!dl ? "selected" : ""}>直连（不经过代理）</option>
+          ${lines.map(l => `<option value="${esc(l.id)}" ${l.id === dl ? "selected" : ""}>${esc(l.name)}</option>`).join("")}
+        </select>
+        <span style="font-size:11.5px;color:var(--muted)">添加新软件时自动绑这条，之后可单独改</span>
+      </div></div>
+      <div class="row"><label>开机自启</label><div class="val">
+        <span class="badge ${au.enabled ? "on" : "off"}"><i></i>${au.enabled ? "已开启" : "未开启"}</span>
+        <button class="btn btn-ghost btn-sm" id="au-toggle" style="margin-left:10px">
+          ${au.enabled ? "关掉" : "开启"}</button>
+      </div></div>
+      <div class="row"><label>数据目录</label><div class="val"><code>${esc(st.home)}</code></div></div>
+      <div class="row"><label>sing-box</label><div class="val"><code>${esc(st.engines.singbox)}</code></div></div>
+      <div class="row"><label>xray</label><div class="val"><code>${esc(st.engines.xray)}</code></div></div>
+      <div class="row"><label>打开</label><div class="val"
+        style="display:flex;gap:7px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" data-dir="data">数据</button>
+        <button class="btn btn-ghost btn-sm" data-dir="logs">日志</button>
+        <button class="btn btn-ghost btn-sm" data-dir="shortcuts">快捷方式</button>
+        <button class="btn btn-ghost btn-sm" data-dir="apps">档案数据</button>
+        <button class="btn btn-ghost btn-sm" data-dir="code">程序目录</button>
+      </div></div>
+    </div>
+
+    <div class="sec-title">运行中的后台任务</div>
+    <div id="task-list" style="font-size:12px;color:var(--muted)">（没有）</div>
+  </div>`;
+}
+function bindSettings() {
+  const back = $("#back"); if (back) back.onclick = () => go("profile");
+  document.querySelectorAll("[data-l]").forEach(b => {
+    b.onclick = async () => {
+      const a = b.dataset.a, l = b.dataset.l;
+      b.disabled = true; b.textContent = a === "start" ? "启动中…" : a === "stop" ? "停止中…" : "处理中…";
+      try {
+        if (a === "refresh") {
+          await api(`/api/line/${encodeURIComponent(l)}/refresh`, {method:"POST"});
+          toast("已开始更新订阅并测速，进度见下方");
+        } else {
+          const r = await api(`/api/line/${encodeURIComponent(l)}/${a}`, {method:"POST"});
+          toast(r.message);
+        }
+      } catch (e) { toast(e.message, 5000); }
+      await refresh(true);
+      await loadSettings();
+    };
+  });
+  const on = $("#sp-on"), off = $("#sp-off");
+  if (on) on.onclick = async () => {
+    const lid = $("#sp-line")?.value || "";
+    try { const r = await api("/api/settings/sysproxy", {method:"POST",
+      body: JSON.stringify({mode:"on", line_id: lid})}); toast(r.message); }
+    catch (e) { toast(e.message, 5000); }
+    await refresh(true); await loadSettings();
+  };
+  if (off) off.onclick = async () => {
+    try { const r = await api("/api/settings/sysproxy", {method:"POST",
+      body: JSON.stringify({mode:"off"})}); toast(r.message); }
+    catch (e) { toast(e.message, 5000); }
+    await refresh(true); await loadSettings();
+  };
+  const tunBtn = async (b, path) => {
+    if (!b) return;
+    const old = b.textContent;
+    const isStart = path.indexOf("start") >= 0;
+    b.disabled = true;
+    if (isStart) {
+      b.textContent = "等待授权…";
+      // UAC 弹窗会把屏幕变暗，用户可能不知道这是自己点的软件引起的
+      toast("如弹出「用户账户控制」窗口，请点「是」——只需授权这一次", 10000);
+    } else {
+      b.textContent = "处理中…";
+    }
+    try {
+      const r = await api(path, {method: "POST"});
+      toast(r.message || "好了", 9000);
+      if (r.state && S.settings) S.settings.tun = r.state;
+    } catch (e) {
+      // 提权失败/没线路：这里要长一点，用户得看清该怎么办
+      toast(e.message, 14000);
+    }
+    await refresh(true); await loadSettings();
+    if (b.isConnected) { b.disabled = false; b.textContent = old; }
+  };
+  const tunOn = $("#tun-on"), tunOff = $("#tun-off");
+  if (tunOn) tunOn.onclick = () => tunBtn(tunOn, "/api/tun/start");
+  if (tunOff) tunOff.onclick = () => tunBtn(tunOff, "/api/tun/stop");
+
+  const au = $("#au-toggle");
+  if (au) au.onclick = async () => {
+    const want = !(S.settings.autostart || {}).enabled;
+    try { const r = await api("/api/settings/autostart", {method:"POST",
+      body: JSON.stringify({on: want})}); toast(r.message); }
+    catch (e) { toast(e.message, 5000); }
+    await loadSettings();
+  };
+  const dlSel = $("#dl-line");
+  if (dlSel) dlSel.onchange = async () => {
+    try {
+      const r = await api("/api/settings/default-line", {method:"POST",
+        body: JSON.stringify({line_id: dlSel.value})});
+      toast(r.message);
+    } catch (e) { toast(e.message, 5000); }
+    await loadSettings();
+  };
+  document.querySelectorAll("[data-dir]").forEach(b => {
+    b.onclick = async () => {
+      try {
+        const r = await api("/api/open-dir", {method:"POST",
+          body: JSON.stringify({what: b.dataset.dir})});
+        toast("已打开 " + r.path, 2200);
+      } catch (e) { toast(e.message, 5000); }
+    };
+  });
+  paintTasks();
+}
+function paintTasks() {
+  const box = $("#task-list");
+  if (!box) return;
+  const ts = (S.data && S.data.recent_tasks) || [];
+  if (!ts.length) { box.innerHTML = `（没有）`; return; }
+  box.innerHTML = ts.map(t => {
+    const color = t.status === "done" ? "var(--green-d)" : t.status === "error" ? "var(--red)" : "#2b5fc7";
+    const mark = t.status === "done" ? "完成" : t.status === "error" ? "失败" : "进行中";
+    return `<div class="taskbar" style="border-color:#e4e4ea;background:#fafafd;color:#3d3d49">
+      <span style="color:${color};font-weight:600">${mark}</span>
+      <span>${esc(t.name)}</span>
+      <span style="flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.detail || "")}</span>
+    </div>`;
+  }).join("");
+}
+async function loadSettings() {
+  try { S.settings = await api("/api/settings"); } catch (e) { S.settings = null; }
+  if (S.view === "settings") { renderMain(); }
+}
+
+/* ---------------- 视图切换（主界面 / 设置 / 程序库） ----------------
+   #settings、#apps 两个锚点既是地址栏里的书签，也是托盘「设置…」
+   把已开着的窗口切过去用的定位符。 */
+const VIEW_HASH = { profile: "", settings: "settings", apps: "apps" };
+const HASH_VIEW = { "": "profile", "settings": "settings", "apps": "apps" };
+
+function go(view) {
+  S.view = VIEW_HASH.hasOwnProperty(view) ? view : "profile";
+  const frag = VIEW_HASH[S.view];
+  if (location.hash.replace(/^#/, "") !== frag) {
+    history.replaceState(null, "", frag ? "#" + frag : location.pathname + location.search);
+  }
+  if (S.view === "apps") { S.apps = null; loadApps(); }
+  if (S.view === "settings" || S.view === "apps") loadSettings();
+  renderList(); renderMain(); paintSideFoot(); syncSettingsEntry();
+  reportView();
+}
+
+/* 回报当前页，方便托盘确认「设置…」到底切过去了没有 */
+function reportView() {
+  try {
+    fetch("/api/view/current", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ view: S.view })
+    });
+  } catch (e) {}
+}
+
+function syncSettingsEntry() {
+  const b = $("#btn-settings");
+  if (b) b.classList.toggle("on", S.view === "settings");
+}
+
+/* 托盘那边点「设置…」只是往内存里丢一句话，这里取走才真正切页。
+   1.2 秒一轮，用户点完最多一秒多就看到，不用重启窗口。 */
+async function pollPendingView() {
+  try {
+    const r = await api("/api/view/pending");
+    if (r && r.view && r.view !== S.view) go(r.view);
+  } catch (e) { /* 服务刚关掉时很正常，下一轮再说 */ }
+}
+
+/* ---------------- 主循环 ---------------- */
+function paintSideFoot() {
+  const d = S.data;
+  if (!d) return;
+  const total = (d.lines || []).length;
+  const up = (d.lines || []).filter(l => l.running).length;
+  const live = (d.profiles || []).filter(p => p.alive).length;
+  $("#sum").textContent = `内核 ${up}/${total} · 软件 ${live}/${(d.profiles||[]).length} 运行`;
+  $("#live").classList.toggle("on", up > 0);
+}
+
+async function refresh(force) {
+  try {
+    S.data = await api("/api/state");
+  } catch (e) {
+    $("#sum").textContent = "连接中断";
+    $("#live").classList.remove("on");
+    return;
+  }
+  const ids = (S.data.profiles || []).map(p => p.id).join(",");
+  if (force || ids !== S.lastIds) {
+    S.lastIds = ids;
+    if (!S.sel && S.data.profiles.length) S.sel = S.data.profiles[0].id;
+    renderList();
+    renderMain();
+  } else {
+    paintListState();
+    paintDetail();
+  }
+  paintSideFoot();
+  if (S.view === "settings") paintTasks();
+}
+
+function renderAll() {
+  renderList();
+  renderMain();
+  paintSideFoot();
+}
+
+/* ---------------- 启动 ---------------- */
+function boot() {
+  $("#q").oninput = (e) => { S.q = e.target.value; renderList(); paintListState(); };
+  $("#btn-add").onclick = () => go("apps");
+  $("#btn-settings").onclick = () => go("settings");
+  $("#btn-settings-top").onclick = () => go("settings");
+  window.addEventListener("hashchange", () => {
+    const want = HASH_VIEW[location.hash.replace(/^#/, "")] || "profile";
+    if (want !== S.view) go(want);
+  });
+  // 深链：#settings / #apps —— 托盘点「设置…」新开的窗口就靠这个直接落地
+  S.view = HASH_VIEW[location.hash.replace(/^#/, "")] || "profile";
+  syncSettingsEntry();
+  reportView();
+  if (S.view === "apps") loadApps();
+  if (S.view === "settings") loadSettings();
+
+  refresh(true);
+  setInterval(() => refresh(false), 1500);
+  setInterval(pollPendingView, 1200);
+  setInterval(() => { if (S.view === "settings") loadSettings(); }, 6000);
+}
+document.addEventListener("DOMContentLoaded", boot);
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+# ---- 运行数据（绝不进仓库：订阅地址里带 token）----
+# 注意：这几个必须带开头的斜杠，否则会把 appproxy/data/ 一起忽略掉
+/data/
+/logs/
+/runtime/
+/apps/
+/icons/
+/shortcuts/
+/backup-cleanup-*/
+*.log
+
+# ---- 本机状态文件 ----
+gui.port
+pool.json
+lines.json
+profiles.json
+nodes-*.json
+
+# ---- 第三方内核：体积大，用 scripts/fetch_engine.py 拉 ----
+third_party/sing-box/*/sing-box.exe
+third_party/sing-box/*/libcronet.dll
+third_party/xray/*.exe
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.lnk
+
+# ---- 截图中间产物 ----
+docs/_*.png
