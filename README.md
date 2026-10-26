@@ -1,4 +1,6 @@
-# 分应用代理管家
+# APPVPN · 分应用代理管家
+
+Windows per-app proxy manager with independent routing for multiple Chrome instances.
 
 **把「全机代理」拆成「按程序代理」。**
 
