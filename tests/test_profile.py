@@ -214,5 +214,4 @@ def test_launcher_arguments_point_to_launcher(tmp_home):
     assert "profile" in args and "launch" in args and "chrome-work" in args
     # 源码模式下必须显式带模块入口，否则 exe 以外的方式拉不起来
     assert "-m" in args and "appproxy.cli" in args
-    assert shortcut.launcher_script().name == "launcher.py"
     assert shortcut.python_exe().name.lower().startswith("python")

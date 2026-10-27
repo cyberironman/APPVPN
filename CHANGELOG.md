@@ -4,6 +4,66 @@
 
 ---
 
+## v0.6.0 — 两种发行形态：安装版 + 绿色版
+
+**之前的问题**：只有 zip。想装到别的地方得自己解压到那；想卸载得自己找文件夹；
+想放 U 盘带走，数据却还留在 `D:\AppProxy` —— 说「拷走就能用」是不成立的。
+
+**改**
+
+- **新增 Windows 安装包** `AppProxy-v0.6.0-win64-setup.exe`（45 MB，Inno Setup 6）。
+
+  - 向导里**自己选安装目录**（`DisableDirPage=no`），默认装在当前用户目录，
+    **全程不弹 UAC**；想装 `Program Files` 给全机器用，第一页选「为所有用户安装」。
+  - **数据默认就放安装目录里**（`<安装目录>\AppProxyData\`），安装时**不额外问一遍**。
+    装在哪个目录数据就在哪；想换盘在软件「设置 → 数据目录 → 更改…」里选，
+    现有配置自动复制过去（旧目录保留，反悔能改回来）。
+  - 开始菜单、桌面快捷方式（可勾）、卸载项齐备；卸载时问一句「要不要删配置」，
+    默认**不删**，重装能接着用。
+  - 安装信息写 `HKCU\Software\AppProxy`（`InstallDir` / `DataDir`），
+    升级安装用 `createvalueifdoesntexist`，不会覆盖用户改过的选择。
+
+- **绿色版变成真便携**：zip 带 `portable.txt` 标记，数据写同目录 `AppProxyData\`。
+  换盘符、拷 U 盘、换电脑，订阅和配置都跟着文件夹走；删文件夹即卸载。
+  zip 内改成带顶层 `AppProxy\` 目录，解压不会摊一地。
+
+- **`settings.home()` 重写为五档优先级**：`APPPROXY_HOME` > 软件里设定的数据目录
+  （注册表 `DataDir`） > **程序旁边的 `AppProxyData`** > `%LOCALAPPDATA%\AppProxy`；
+  源码运行仍是 `D:\AppProxy`。同时新增 `settings.exe_dir()` —— 「软件放在哪」和
+  「程序内容在哪」是两件事，打包后 `code_root()` 是 `_internal\`，不能拿它当用户目录。
+- **软件里能改数据目录**：设置页「数据目录 → 更改…」调 Windows 原生选目录框
+  （`appproxy/folderpick.py`，直接调 shell32，零依赖），选完把现有配置复制过去，
+  写注册表，重启生效。`POST /api/pick-folder`、`POST /api/settings/data-dir`。
+
+- **补齐运行库并做启动自检**（`appproxy/preflight.py`）
+
+  - `wintun.dll` 随包分发（TUN 虚拟网卡在 Windows 上必需，之前其实一直缺）。
+  - 启动时体检：系统版本、UCRT、内核、wintun、数据目录权限、磁盘空间、VC++ 运行库。
+  - 缺什么**直接给一键处理**：VC++ 运行库自动下载微软官方安装包并拉起向导；
+    wintun 自动下载解压进内核目录。都在「设置 → 运行环境」里，有卡有按钮。
+  - 阻断级问题（内核丢了、目录没权限、系统太老）在双击启动时用系统对话框拦住，
+    不让人对着黑屏猜。
+  - 命令行 `AppProxy.exe doctor`（`--fix vc_runtime` / `--fix wintun`）。
+
+- **打包后的控制台输出**：exe 是无控制台的，从 cmd 跑 `AppProxy.exe doctor` 原本什么都看不到。
+  改为附加父进程控制台并把输出代码页切 UTF-8（`packaging/entry.py`）。
+
+**清理**
+
+- 删掉两个打包后已失效的死函数 `shortcut.launcher_script()`、`autostart.tray_script()`。
+
+**测试**
+
+- 新增 `tests/test_preflight.py`（11 项），`tests/test_paths.py` 重写为 10 项
+  （覆盖便携 / 注册表 / D 盘 / LocalAppData / 环境变量五档），单测总数 **128 项**。
+- 端到端：
+  - 绿色版解压到非安装目录，`doctor` 显示数据目录就在软件旁边（便携生效）；
+  - 安装版静默安装到自选目录 → 注册表 `InstallDir`/`DataDir` 正确、
+    **没有** `portable.txt`、带 `unins000.exe`；
+  - 卸载后安装目录清空、注册表项删除、数据目录按要求保留。
+
+---
+
 ## v0.5.0 补充：改成真正开箱即用的分发方式
 
 **之前的问题**：内核 79 MB 被排除在仓库外，README 让用户 clone 完再跑

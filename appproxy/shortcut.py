@@ -30,11 +30,12 @@ def python_exe() -> Path:
     return selfrun.self_exe()
 
 
-def launcher_script() -> Path:
-    return settings.code_root() / "appproxy" / "launcher.py"
-
-
 def launcher_arguments(profile_id: str) -> str:
+    """快捷方式的参数：走 `profile launch <id>` 子命令。
+
+    早期版本这里拼的是 `launcher.py --profile <id>`，打包成 exe 后既没有
+    pythonw.exe 也没有 .py 文件，快捷方式全部点不开，所以改由 selfrun 统一。
+    """
     return selfrun.self_args(["profile", "launch", profile_id])
 
 

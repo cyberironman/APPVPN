@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -27,14 +28,16 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from .. import (appdb, appscan, autostart, coreproc, gui_support, icons, latency,
-                launcher, pool, procwatch, profiles, settings, setup, shortcut,
-                subscription, sysproxy, tunmgr, xrayconf)
+                launcher, pool, preflight, procwatch, profiles, settings, setup,
+                shortcut, subscription, sysproxy, tunmgr, xrayconf)
 from ..profiles import AppProfile
 from ..registry import Registry
 
 ACTION_LOCK = threading.RLock()
 # TUN 单独一把锁：等 UAC 的时间可能有几十秒，不能占着 ACTION_LOCK
 TUN_LOCK = threading.RLock()
+# 选目录是模态对话框，同一时间只允许一个
+PICK_LOCK = threading.RLock()
 STATIC = Path(__file__).resolve().parent / "static"
 APP_TAG = "appproxy"          # /api/ping 的身份标记，防止把端口撞给别人时认错门
 
@@ -181,6 +184,7 @@ def state() -> dict[str, Any]:
     snap["tasks"] = [t for t in TASKS.values() if t["status"] == "running"]
     snap["recent_tasks"] = sorted(TASKS.values(), key=lambda x: x["started"],
                                   reverse=True)[:5]
+    snap["preflight"] = preflight.report()
     return snap
 
 
@@ -445,6 +449,16 @@ def get_settings() -> dict[str, Any]:
         "appdb": appdb.summary(),
         "needs_setup": not reg.lines,
         "home": str(settings.home()),
+        # 数据目录：默认是「软件目录\AppProxyData」，用户可以在设置里改
+        "home_default": str(settings.exe_dir() / settings.PORTABLE_DIR),
+        "home_custom": settings.data_dir_pref() is not None,
+        # 「软件放在哪」和「数据放哪」是两件事，界面上分开显示，
+        # 用户换文件夹、拷 U 盘之后一眼能确认自己跑的是哪一份
+        "exe_dir": str(settings.exe_dir()),
+        "portable": settings.is_portable(),
+        # 源码运行（开发机）既不是安装版也不是绿色版，界面上要说清楚
+        "frozen": bool(getattr(sys, "frozen", False)),
+        "preflight": preflight.report(),
         "engines": {
             "singbox": str(reg.binary("singbox") or "未找到"),
             "xray": str(reg.binary("xray") or "未找到"),
@@ -500,7 +514,6 @@ class SysProxyBody(BaseModel):
     mode: str = "off"           # on / off
     line_id: str = ""
 
-
 @app.post("/api/settings/sysproxy")
 def set_sysproxy(body: SysProxyBody) -> dict[str, Any]:
     with ACTION_LOCK:
@@ -531,6 +544,120 @@ def set_autostart(body: AutoBody) -> dict[str, Any]:
             return {"ok": True, "message": f"已开机自启：{p}"}
         autostart.disable()
         return {"ok": True, "message": "已取消开机自启"}
+
+
+# --------------------------------------------------------------------------- 环境体检
+# 软件是打包分发的，用户机器上没有 Python，缺什么组件只能靠程序自己说清楚。
+# 单独一把锁：下载运行库要几十秒，不能占着 ACTION_LOCK 把别的按钮卡死。
+PREFLIGHT_LOCK = threading.RLock()
+
+
+@app.get("/api/preflight")
+def get_preflight() -> dict[str, Any]:
+    return {
+        "issues": preflight.report(),
+        "healthy": preflight.is_healthy(),
+        "home": str(settings.home()),
+        "exe_dir": str(settings.exe_dir()),
+        "portable": settings.is_portable(),
+        "version": preflight.os_release(),
+        "free_mb": preflight.free_space_mb(),
+    }
+
+
+class FixBody(BaseModel):
+    key: str = ""
+
+
+@app.post("/api/preflight/fix")
+def post_preflight_fix(body: FixBody) -> dict[str, Any]:
+    with PREFLIGHT_LOCK:
+        r = preflight.fix(body.key)
+    return r
+
+
+# --------------------------------------------------------------------------- 数据目录
+# 默认就是「软件目录\AppProxyData」，装在哪个目录数据就在哪。
+# 想放别的盘（C 盘紧张、想放移动硬盘），在设置页点「更改」，弹系统原生选目录框。
+class PickBody(BaseModel):
+    title: str = "选择数据存放目录"
+    initial: str = ""
+
+
+@app.post("/api/pick-folder")
+def post_pick_folder(body: PickBody) -> dict[str, Any]:
+    """弹原生「选择文件夹」对话框。会阻塞到这个请求返回，前端要显示等待态。
+
+    单独一把锁：用户可以连点两下，绝不能同时弹两个模态框。
+    """
+    from .. import folderpick
+    with PICK_LOCK:
+        path = folderpick.pick_folder(title=body.title or "选择文件夹",
+                                      initial=body.initial or None)
+    return {"ok": bool(path), "path": path or "", "cancelled": not path}
+
+
+class DataDirBody(BaseModel):
+    path: str = ""                  # 空 = 恢复默认
+    copy_existing: bool = True      # 是否把现有配置一起搬过去（叫 copy 会和 pydantic 冲突）
+
+
+@app.post("/api/settings/data-dir")
+def post_data_dir(body: DataDirBody) -> dict[str, Any]:
+    """改数据目录。**只记位置不搬程序**，下次启动生效。
+
+    copy=True 时把现有配置复制过去（原目录保留，不删 —— 用户反悔还能改回来）。
+    """
+    import shutil
+
+    if settings.is_portable():
+        raise HTTPException(
+            400, "绿色版的数据跟着文件夹走：把整个软件文件夹移到你想放的位置就行。"
+                 "（也可以删掉 portable.txt，再在这里指定目录。）")
+
+    old = settings.home()
+    raw = (body.path or "").strip().strip('"')
+    if not raw:
+        settings.clear_data_dir()
+        return {"ok": True, "restart": True, "path": str(settings.exe_dir() / settings.PORTABLE_DIR),
+                "message": "已恢复默认位置（软件目录下的 AppProxyData）。重新打开软件后生效。"}
+
+    new = Path(raw).expanduser()
+    try:
+        new = new.resolve()
+    except OSError:
+        pass
+
+    # 目标在老目录里面（或反过来）会让复制无限递归，直接拒
+    try:
+        if new == old or new.is_relative_to(old) or old.is_relative_to(new):
+            raise HTTPException(400, "新目录和当前数据目录互相包含，换一个位置")
+    except AttributeError:          # Python < 3.9 没有 is_relative_to
+        if str(new).startswith(str(old)) or str(old).startswith(str(new)):
+            raise HTTPException(400, "新目录和当前数据目录互相包含，换一个位置") from None
+
+    try:
+        new.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(400, f"建不了这个目录：{e}") from e
+    if not settings.dir_writable(new):
+        raise HTTPException(400, f"没有写权限：{new}")
+
+    copied = 0
+    note = ""
+    if body.copy_existing and old.is_dir():
+        try:
+            # 日志没必要搬（还在写，也没价值）
+            shutil.copytree(old, new, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("logs", "*.tmp"))
+            copied = sum(1 for _ in new.rglob("*"))
+            note = f"，已复制 {copied} 个文件"
+        except OSError as e:
+            note = f"，复制时出错（{e}），可以重新点一次"
+
+    settings.set_data_dir(new)
+    return {"ok": True, "restart": True, "path": str(new),
+            "message": f"数据目录改成 {new}{note}。重新打开软件后生效（旧目录保留着，没删）。"}
 
 
 # --------------------------------------------------------------------------- 新用户接线

@@ -689,6 +689,63 @@ def cmd_appdb(reg: Registry, a) -> int:
     return 0
 
 
+def cmd_doctor(reg: Registry, a) -> int:
+    """环境体检 —— 用户报「打不开」时，先让他跑这一条，比问十个问题快。
+
+    报告同时写一份到 logs 目录：打包后的 exe 是无控制台窗口的，用户在 cmd 里
+    能不能看到输出取决于终端，但**文件一定拿得到**，好让他发给别人看。
+    """
+    from appproxy import preflight
+
+    if a.fix:
+        r = preflight.fix(a.fix)
+        print(f"{OK if r.get('ok') else FAIL} {r.get('message')}")
+        if r.get("url"):
+            print(f"     地址：{r['url']}")
+        return 0 if r.get("ok") else 1
+
+    buf: list[str] = []
+
+    def emit(msg: str = "") -> None:
+        print(msg)
+        buf.append(msg)
+
+    issues = preflight.report()
+    major, minor, build = preflight.os_release()
+    emit("分应用代理管家 · 环境体检")
+    emit(f"  系统      Windows {major}.{minor} 内部版本 {build}")
+    emit(f"  软件位置  {settings.exe_dir()}")
+    emit(f"  数据目录  {settings.home()}"
+         f"{'（绿色版，跟着文件夹走）' if settings.is_portable() else ''}")
+    emit(f"  剩余空间  {preflight.free_space_mb()} MB")
+    emit(f"  内核      {settings.find_singbox() or '没找到'}")
+    emit(f"  wintun    {'在' if preflight.has_wintun() else '缺（只影响 TUN）'}")
+    emit(f"  VC++ 库   {'已装' if preflight.vc_runtime_installed() else '未装（建议装）'}")
+    emit("")
+    blocks = [i for i in issues if i["level"] == "block"]
+    if not issues:
+        emit(f"{OK} 一切正常，没有需要处理的项目")
+    else:
+        for i in issues:
+            mark = FAIL if i["level"] == "block" else "[!] "
+            emit(f"{mark} {i['title']}")
+            emit(f"     {i['detail']}")
+            if i.get("fix"):
+                emit(f"     修法：doctor --fix {i['fix']}")
+        emit("")
+        emit(f"{FAIL} 有 {len(blocks)} 项会阻止程序运行" if blocks
+             else f"{OK} 都能跑，只是有几项建议处理")
+
+    try:
+        settings.logs_dir().mkdir(parents=True, exist_ok=True)
+        out = settings.logs_dir() / "doctor.txt"
+        out.write_text("\n".join(buf) + "\n", encoding="utf-8")
+        print(f"\n     报告已存：{out}")
+    except OSError:
+        pass
+    return 1 if blocks else 0
+
+
 def cmd_cleanup(reg: Registry, a) -> int:
     """上线前把私人代理清干净。
 
@@ -960,6 +1017,10 @@ def main(argv: list[str] | None = None) -> int:
     pcl = sub.add_parser("cleanup", help="上线前清理：删掉所有私人代理与派生数据")
     pcl.add_argument("--yes", action="store_true", help="真的执行（不加只打印计划）")
     pcl.set_defaults(fn=cmd_cleanup)
+
+    pdoc = sub.add_parser("doctor", help="环境体检：系统版本 / 运行库 / 内核 / 目录权限")
+    pdoc.add_argument("--fix", help="直接修某项，例如 --fix vc_runtime 或 wintun")
+    pdoc.set_defaults(fn=cmd_doctor)
 
     # 内部用：提权子进程的落点。源码模式走 `-m appproxy.elevate`，
     # 打包成 exe 后没有解释器了，只能转成 `AppProxy.exe elevate ...`。

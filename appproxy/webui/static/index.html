@@ -759,7 +759,26 @@ function viewSettings() {
         <button class="btn btn-ghost btn-sm" id="au-toggle" style="margin-left:10px">
           ${au.enabled ? "关掉" : "开启"}</button>
       </div></div>
-      <div class="row"><label>数据目录</label><div class="val"><code>${esc(st.home)}</code></div></div>
+      <div class="row"><label>软件位置</label><div class="val">
+        <code>${esc(st.exe_dir || "")}</code>
+        ${st.frozen ? `<span class="badge ${st.portable ? "warn" : "on"}"
+          style="margin-left:8px"><i></i>${st.portable
+            ? "绿色版 · 数据跟着文件夹" : "安装版"}</span>` : ""}
+      </div></div>
+      <div class="row"><label>数据目录</label><div class="val"
+        style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <code>${esc(st.home)}</code>
+        ${st.portable
+          ? `<span class="badge warn"><i></i>绿色版 · 跟文件夹走</span>
+             <span style="font-size:11.5px;color:var(--muted)">
+               换位置就把整个软件文件夹移过去</span>`
+          : `<span class="badge ${st.home_custom ? "warn" : "on"}"><i></i>${
+               st.home_custom ? "自定义" : "默认 · 跟着软件走"}</span>
+             <button class="btn btn-ghost btn-sm" id="btn-datadir">更改…</button>
+             ${st.home_custom
+               ? `<button class="btn btn-ghost btn-sm" id="btn-datadir-reset">恢复默认</button>`
+               : ""}`}
+      </div></div>
       <div class="row"><label>sing-box</label><div class="val"><code>${esc(st.engines.singbox)}</code></div></div>
       <div class="row"><label>xray</label><div class="val"><code>${esc(st.engines.xray)}</code></div></div>
       <div class="row"><label>打开</label><div class="val"
@@ -771,6 +790,9 @@ function viewSettings() {
         <button class="btn btn-ghost btn-sm" data-dir="code">程序目录</button>
       </div></div>
     </div>
+
+    <div class="sec-title">运行环境（软件自带的东西缺没缺）</div>
+    <div id="preflight"></div>
 
     <div class="sec-title">运行中的后台任务</div>
     <div id="task-list" style="font-size:12px;color:var(--muted)">（没有）</div>
@@ -853,6 +875,34 @@ function bindSettings() {
     } catch (e) { toast(e.message, 5000); }
     await loadSettings();
   };
+  /* 数据目录：弹系统原生的「选择文件夹」框，选完把现有配置一起复制过去。
+     路径必须是绝对路径 —— 浏览器给不了，所以交给后端调 shell32。 */
+  const bdd = $("#btn-datadir");
+  if (bdd) bdd.onclick = async () => {
+    const cur = (S.settings && S.settings.home) || "";
+    const old = bdd.textContent;
+    bdd.disabled = true;
+    bdd.textContent = "请在弹出的窗口里选…";
+    try {
+      const pick = await api("/api/pick-folder", {method: "POST",
+        body: JSON.stringify({title: "选择数据存放目录", initial: cur})});
+      if (!pick.ok) { toast("没有选择，保持原样", 2600); return; }
+      const r = await api("/api/settings/data-dir", {method: "POST",
+        body: JSON.stringify({path: pick.path, copy_existing: true})});
+      toast(r.message, 15000);
+      await loadSettings();
+    } catch (e) { toast(e.message, 12000); }
+    finally { bdd.disabled = false; bdd.textContent = old; }
+  };
+  const bdr = $("#btn-datadir-reset");
+  if (bdr) bdr.onclick = async () => {
+    try {
+      const r = await api("/api/settings/data-dir", {method: "POST",
+        body: JSON.stringify({path: "", copy_existing: false})});
+      toast(r.message, 10000);
+      await loadSettings();
+    } catch (e) { toast(e.message, 8000); }
+  };
   document.querySelectorAll("[data-dir]").forEach(b => {
     b.onclick = async () => {
       try {
@@ -862,7 +912,60 @@ function bindSettings() {
       } catch (e) { toast(e.message, 5000); }
     };
   });
+  paintPreflight();
   paintTasks();
+}
+/* 运行环境体检：缺什么就列什么，能自动修的给按钮。
+   软件是打包发出去的，用户机器上没有 Python 也不该看到「找不到 dll」
+   这种天书，所以这里只讲人话 + 给一键处理。 */
+function paintPreflight() {
+  const box = $("#preflight");
+  if (!box) return;
+  const list = (S.data && S.data.preflight) || [];
+  // 内容没变就不重画 —— 轮询每秒都在跑，重画会把用户正点的按钮冲掉
+  const sig = JSON.stringify(list);
+  if (box._sig === sig) return;
+  box._sig = sig;
+  if (!list.length) {
+    box.innerHTML = `<div class="line-card" style="color:var(--green-d)">
+      <div class="line-top"><span class="nm">一切正常</span>
+        <span class="badge on"><i></i>没有需要处理的项目</span></div>
+    </div>`;
+    return;
+  }
+  box.innerHTML = list.map(i => {
+    const block = i.level === "block";
+    return `<div class="line-card" style="border-color:${block ? "var(--red)" : "#efe2bd"}">
+      <div class="line-top">
+        <span class="nm">${esc(i.title)}</span>
+        <span class="badge ${block ? "off" : "warn"}"><i></i>${block ? "必须处理" : "建议处理"}</span>
+        <span class="sp"></span>
+        ${i.fix ? `<button class="btn ${block ? "btn-primary" : "btn-ghost"} btn-sm"
+          data-fix="${esc(i.fix)}">${esc(i.fix_label || "处理")}</button>` : ""}
+      </div>
+      <div style="margin-top:7px;font-size:11.5px;color:var(--muted);line-height:1.7">
+        ${esc(i.detail)}</div>
+    </div>`;
+  }).join("");
+  box.querySelectorAll("[data-fix]").forEach(b => {
+    b.onclick = async () => {
+      const old = b.textContent;
+      b.disabled = true;
+      b.textContent = "处理中…";
+      try {
+        const r = await api("/api/preflight/fix", {method:"POST",
+          body: JSON.stringify({key: b.dataset.fix})});
+        toast(r.message || "好了", r.ok ? 8000 : 14000);
+        // 修完立刻重查一遍：体检结果要能当场变化，不能等用户手动刷新
+        await Promise.all([refresh(true), loadSettings()]);
+        if (S.view === "settings") paintPreflight();
+      } catch (e) {
+        toast(e.message, 12000);
+        b.disabled = false;
+        b.textContent = old;
+      }
+    };
+  });
 }
 function paintTasks() {
   const box = $("#task-list");
@@ -957,7 +1060,7 @@ async function refresh(force) {
     paintDetail();
   }
   paintSideFoot();
-  if (S.view === "settings") paintTasks();
+  if (S.view === "settings") { paintTasks(); paintPreflight(); }
 }
 
 function renderAll() {

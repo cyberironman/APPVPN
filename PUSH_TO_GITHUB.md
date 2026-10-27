@@ -7,7 +7,7 @@
 | 仓库 | https://github.com/phoenixonworld/APPVPN |
 | 当前状态 | **私有（Private）** |
 | 默认分支 | `main` |
-| 下载页 | https://github.com/phoenixonworld/APPVPN/releases/tag/v0.5.0 |
+| 下载页 | https://github.com/phoenixonworld/APPVPN/releases/latest |
 | 认证方式 | Git Credential Manager（已登录 `phoenixonworld`，以后不用再输密码） |
 
 > 仓库里**包含 sing-box 内核**（`sing-box.exe` 78 MB + `libcronet.dll` 9 MB）。
@@ -36,25 +36,35 @@ git-credential-manager github login
 
 ## 发新版本（Release）
 
-普通用户拿到的就是这个包，**不是仓库源码**。
+普通用户拿到的就是这个包，**不是仓库源码**。一条命令出两个：
 
 ```bat
 python scripts\build_release.py
 ```
 
-产物 `dist\AppProxy-v<版本>-win64.zip`（约 60 MB）。然后：
+| 产物 | 大小 | 给谁 |
+|---|---|---|
+| `dist\AppProxy-v<版本>-win64-setup.exe` | 约 45 MB | **安装版**，普通用户首选：双击 → 下一步 → 自选目录 → 完成 |
+| `dist\AppProxy-v<版本>-win64.zip` | 约 60 MB | **绿色版**，解压即用、可放 U 盘，数据跟着文件夹走 |
+
+两个都带 `.sha256`。安装版需要装一次 [Inno Setup 6](https://jrsoftware.org/isdl.php)
+（`winget install JRSoftware.InnoSetup`），没装就只出绿色版，不会报错。
+
+然后：
 
 **方式 A：网页**
 仓库页右侧 **Releases → Draft a new release** →
-Tag 填 `v0.5.1`（新建）→ 标题 → 把 zip 拖进附件框 → Publish release。
+Tag 填 `v0.6.1`（新建）→ 标题 → 把 **两个文件都拖进附件框** → Publish release。
+在正文里分别写清楚「装哪个」——大多数用户会直接点第一个附件。
 
 **方式 B：命令行（有 gh 时）**
 
 ```bat
-gh release create v0.5.1 "dist\AppProxy-v0.5.1-win64.zip" --title "v0.5.1"
+gh release create v0.6.1 "dist\AppProxy-v0.6.1-win64-setup.exe" "dist\AppProxy-v0.6.1-win64.zip" --title "v0.6.1"
 ```
 
-发完记得同步修改 `README.md` 里写死的版本号（现在写的是 `v0.5.0`）。
+发完记得同步改版本号：`appproxy/__init__.py` 的 `__version__`、
+`packaging/installer.iss` 的 `AppVersion`、`README.md` 首屏。
 
 ---
 

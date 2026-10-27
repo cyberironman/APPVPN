@@ -29,11 +29,6 @@ def target_lnk() -> Path:
     return startup_dir() / LNK_NAME
 
 
-def tray_script() -> Path:
-    """源码模式下托盘的入口脚本；打包后没有这个文件，改用 exe 的 tray 子命令。"""
-    return settings.code_root() / "appproxy" / "tray.py"
-
-
 def enabled() -> bool:
     return target_lnk().is_file()
 

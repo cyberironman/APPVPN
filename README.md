@@ -6,10 +6,16 @@ Windows per-app proxy manager with independent routing for multiple Chrome insta
 
 同一个软件可以开多个图标、各走不同线路，互不干扰；线路只在它对应的那个程序启动时才起来，程序关掉就自动退场。Windows 桌面工具，Python + sing-box。
 
-> 版本 0.5.0 ｜ 平台 Windows 10 / 11 ｜ 相关技术方案正在准备发明专利申请
+> 版本 0.6.0 ｜ 平台 Windows 10 / 11 ｜ 相关技术方案正在准备发明专利申请
 >
-> **下载就能用**：到 [Releases](../../releases) 下 `AppProxy-v0.5.0-win64.zip`，
-> 解压，双击 `AppProxy.exe`。**不需要装 Python，不需要装依赖，不需要跑任何脚本。**
+> **下载就能用**，两种形态任选，都**不需要装 Python、不需要装依赖、不需要跑任何脚本**：
+>
+> | 形态 | 文件 | 怎么用 |
+> |---|---|---|
+> | **安装版**（推荐给普通用户） | `AppProxy-v0.6.0-win64-setup.exe` | 双击 → 下一步 → **自己选安装目录** → 完成 |
+> | **绿色版**（放 U 盘、拷着走） | `AppProxy-v0.6.0-win64.zip` | 解压到任意位置 → 双击 `AppProxy.exe` |
+>
+> 到 [Releases](../../releases) 下载。少什么运行库，软件会自己检查出来并给你一键安装的按钮。
 
 ![主界面](docs/主界面.png)
 
@@ -110,15 +116,43 @@ WeChat 式主界面：左侧软件列表、右侧详情，设置也在主界面�
 
 ## 快速开始
 
-### 普通用户：下载 → 解压 → 双击
+### 方式一：安装版（推荐）
 
-1. 到 [Releases](../../releases) 下载 `AppProxy-<版本>-win64.zip`
-2. 解压到任意目录（例如 `D:\AppProxy-软件\`）
+1. 到 [Releases](../../releases) 下载 `AppProxy-v<版本>-win64-setup.exe`
+2. 双击运行，一路「下一步」——**安装目录自己选**，想装 D 盘就装 D 盘
+3. 装完自动出现在开始菜单和桌面，从控制面板/设置里可以正常卸载
+
+数据默认就放在安装目录里（`<安装目录>\AppProxyData\`），**不再多问一遍**。
+想放别的盘，装完在软件「设置 → 数据目录」里改，现有配置会自动复制过去。
+
+默认装在当前用户目录，**全程不弹管理员授权**；想装到 `Program Files` 给全机器用，
+在向导第一页选「为所有用户安装」即可。
+
+卸载时会问一句「要不要同时删掉配置和日志」，默认**不删** —— 重装能接着用。
+
+### 方式二：绿色版（便携）
+
+1. 到 [Releases](../../releases) 下载 `AppProxy-v<版本>-win64.zip`
+2. 解压到任意位置（本地盘、U 盘、移动硬盘都行）
 3. 双击 `AppProxy.exe`
 
-**不需要装 Python，不需要装任何依赖，不需要跑任何脚本。** 内核、运行时、界面全在包里。
+绿色版带 `portable.txt` 标记，数据写在同目录的 `AppProxyData\` 里。所以：
+
+- 整个文件夹**搬到哪都能用**，换盘符、换电脑、拷 U 盘，订阅和配置都跟着走
+- 不用了**直接删文件夹**，系统里不留任何东西
+- 唯一依赖是 Windows 10/11 本身
 
 第一次双击会直接弹出接线页 —— 填订阅地址，或者选一个你已经在用的客户端的本地端口。
+
+### 缺运行库怎么办
+
+软件启动时会自己体检。主界面「设置」页最下面有**运行环境**一节：缺什么列什么，每条都带一个按钮。
+
+- 缺 VC++ 运行库 → 点一下自动下载微软官方安装包并打开安装向导
+- 缺 TUN 驱动 → 点一下自动补进内核目录（只影响虚拟网卡模式）
+- 缺内核 / 目录没权限 → 直接告诉你该怎么处理，不用去翻日志
+
+命令行也能查：`AppProxy.exe doctor`（加 `--fix vc_runtime` / `--fix wintun` 可直接修）。
 
 ### 从源码跑（开发者）
 
@@ -135,10 +169,15 @@ scripts\start_tray.bat :: 起托盘图标
 ### 自己打包
 
 ```bat
-python scripts\build_release.py
+python scripts\build_release.py              :: 绿色版 + 安装版
+python scripts\build_release.py --zip        :: 只出绿色版
+python scripts\build_release.py --installer  :: 只出安装版
 ```
 
-产出 `dist\AppProxy-v<版本>-win64.zip`，就是上面那个给普通用户的包。
+产出 `dist\` 下两个文件：`AppProxy-v<版本>-win64.zip`（绿色版）和
+`AppProxy-v<版本>-win64-setup.exe`（安装版）。安装版需要装一次
+[Inno Setup 6](https://jrsoftware.org/isdl.php)（`winget install JRSoftware.InnoSetup`），
+没装就只出绿色版，不会报错。
 
 ---
 
@@ -258,18 +297,34 @@ pywebview（WebView2）在部分机器上环境创建失败时只留一片白，
 │  ├─ webui/
 │  │  ├─ api.py              FastAPI 接口
 │  │  └─ static/index.html   单页前端（无框架）
+│  ├─ preflight.py           环境体检：缺什么运行库 + 一键安装
+│  ├─ selfrun.py             源码/打包两种形态下「再拉起自己」
+│  ├─ settings.py            路径解析（便携 / 安装版 / 回退）
 │  └─ data/apps_need_proxy.json  「明显需要代理」清单
 ├─ scripts/                  setup.bat / start_tray.bat / start_gui.bat
-│                            build_release.py（打发布包）/ fetch_engine.py（升级内核）
-├─ packaging/                PyInstaller 配置 + exe 入口（出 AppProxy.exe 用）
+│                            build_release.py（出两种发布包）/ fetch_engine.py（升级内核）
+├─ packaging/                PyInstaller 配置 + exe 入口 + Inno Setup 安装脚本
+│                            installer.iss / ChineseSimplified.isl / AppProxy.spec
 ├─ tests/                    单测 + 端到端脚本 + 出图脚本
 ├─ tools/verify_tun.py       TUN 一键自检（起内核、查网卡、出报告）
 ├─ docs/                     截图与文档
-├─ third_party/              sing-box 内核（随仓库分发，clone 即有）+ 来源与许可
+├─ third_party/              sing-box 内核 + wintun 驱动（随仓库分发，clone 即有）
 └─ requirements.txt
 ```
 
-运行数据在 `D:\AppProxy\`，与代码物理分开 —— 这样订阅地址不会跟着代码一起被复制、打包、提交。
+运行数据的位置**跟着软件走**，不写死任何盘符：
+
+| 形态 | 数据默认落在哪 | 想换位置 |
+|---|---|---|
+| 安装版 | `<安装目录>\AppProxyData\` | 设置 → 数据目录 → 更改… |
+| 绿色版 | `<解压目录>\AppProxyData\` | 同上 |
+| 源码运行 | `D:\AppProxy`（有 D 盘）> `%LOCALAPPDATA%\AppProxy` | `APPPROXY_HOME` 环境变量 |
+
+**装在哪个目录，数据就在哪个目录** —— 安装时不额外问一遍。整个文件夹搬走（换盘符、
+拷 U 盘、换电脑）数据跟着走；软件里也能随时改到一个更空的盘，现有配置会自动复制过去。
+只有程序目录写不进去时（装在 `Program Files` 又没给权限）才退到 `%LOCALAPPDATA%\AppProxy`。
+
+订阅地址带 token（访问令牌），所以数据永远和程序文件分开，不会跟着安装包一起发出去。
 
 ---
 

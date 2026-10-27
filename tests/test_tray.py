@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from appproxy import appscan, autostart, settings, sysproxy, tray
+from appproxy import appscan, autostart, selfrun, settings, sysproxy, tray
 from appproxy.models import Line
 from appproxy.profiles import AppProfile, ProfileStore
 
@@ -69,7 +69,10 @@ def test_autostart_paths(monkeypatch, tmp_path):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     assert autostart.startup_dir() == tmp_path / "Microsoft/Windows/Start Menu/Programs/Startup"
     assert autostart.target_lnk().name == autostart.LNK_NAME
-    assert autostart.tray_script().name == "tray.py"
+    # 自启项不再指向 tray.py 脚本（打包成 exe 后那个文件不存在），
+    # 而是走 selfrun 拼的 `tray` 子命令
+    args = selfrun.self_args(["tray"])
+    assert args.split()[-1] == "tray"
 
 
 def test_autostart_toggle(monkeypatch, tmp_path):
