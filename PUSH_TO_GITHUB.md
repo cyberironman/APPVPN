@@ -77,9 +77,9 @@ gh release create v0.6.1 "dist\AppProxy-v0.6.1-win64-setup.exe" "dist\AppProxy-v
   1. 转公开：仓库 **Settings → 最下方 Danger Zone → Change visibility → Public**
   2. 保持私有，直接把这个 zip 文件发给对方
 
-> **专利提醒**：本项目的技术方案正在准备发明专利申请。专利法要求「新颖性」——
-> 在申请日之前公开技术内容，自己公开的也会成为现有技术。
-> 申请递上去之前，建议保持 Private。
+> **公开前提醒**：仓库一旦转为 Public，所有历史提交都能被看到。
+> 转公开之前务必确认 `git log -p` 里没有订阅地址、节点凭据、真实线路名 ——
+> 清目录不够，历史也要清（详见 `docs/发布前检查清单.md`）。
 
 ---
 
