@@ -16,10 +16,12 @@ lines.json
 profiles.json
 nodes-*.json
 
-# ---- 第三方内核：体积大，用 scripts/fetch_engine.py 拉 ----
-third_party/sing-box/*/sing-box.exe
-third_party/sing-box/*/libcronet.dll
-third_party/xray/*.exe
+# ---- 第三方内核：**进仓库**，clone 下来就能跑，不需要任何额外步骤 ----
+# sing-box.exe 79 MB + libcronet.dll 9 MB，GitHub 对单文件只做 50 MB 警告、100 MB 才拒绝，
+# 所以完全可以提交。仓库大一点，换来的是「下载即用」。
+# 升级内核用 scripts/fetch_engine.py（它现在只负责更新，不是必跑步骤）。
+# 仅排除下载过程中的临时压缩包：
+third_party/**/*.zip
 
 # ---- Python ----
 __pycache__/
