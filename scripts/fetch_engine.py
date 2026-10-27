@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
-"""下载并解压 sing-box 内核到 third_party/sing-box/。
+"""升级 / 修复 sing-box 内核 —— **不是必跑步骤**。
 
-为什么内核不进仓库：sing-box.exe 有 79 兆字节，超过 GitHub 建议的单文件体积，
-clone 一次要等很久。需要的时候跑这个脚本拉一次就行（只跑一次）。
+内核已经跟着仓库一起下发（`third_party/sing-box/`），clone 下来就能直接跑，
+发布用的 zip 也把内核打在里面。这个脚本只在两种情况下用：
 
-    python scripts/fetch_engine.py                # 下 1.14.4 Windows x64（默认）
-    python scripts/fetch_engine.py --version 1.14.4
-    python scripts/fetch_engine.py --check        # 只检查本地有没有，不下载
+    1. 想升级到新版内核；
+    2. 内核文件被人删了、或者 clone 时用了 `--depth` 之类把文件漏掉了。
+
+    python scripts\\fetch_engine.py --check        # 只检查本地有没有
+    python scripts\\fetch_engine.py                # 补齐 1.14.4 Windows x64（默认）
+    python scripts\\fetch_engine.py --version 1.14.4
 
 上游：https://github.com/SagerNet/sing-box
 许可：GPL-3.0-or-later（LICENSE 会跟着一起解压出来，分发时必须保留）

@@ -757,6 +757,18 @@ def cmd_cleanup(reg: Registry, a) -> int:
     return 0
 
 
+def cmd_elevate(a) -> int:
+    """内部入口：提权后的子进程走这里装 TUN 计划任务。
+
+        AppProxy.exe elevate install --binary ... --config ...
+        源码模式等价：python -m appproxy.elevate install --binary ... --config ...
+
+    不给用户直接用，所以 help 里隐藏。
+    """
+    from . import elevate
+    return elevate.main(list(a.rest))
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="appproxy", description="分应用代理管家 · 核心层")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -948,6 +960,12 @@ def main(argv: list[str] | None = None) -> int:
     pcl = sub.add_parser("cleanup", help="上线前清理：删掉所有私人代理与派生数据")
     pcl.add_argument("--yes", action="store_true", help="真的执行（不加只打印计划）")
     pcl.set_defaults(fn=cmd_cleanup)
+
+    # 内部用：提权子进程的落点。源码模式走 `-m appproxy.elevate`，
+    # 打包成 exe 后没有解释器了，只能转成 `AppProxy.exe elevate ...`。
+    pel = sub.add_parser("elevate", help=argparse.SUPPRESS)
+    pel.add_argument("rest", nargs=argparse.REMAINDER)
+    pel.set_defaults(fn=cmd_elevate)
 
     a = p.parse_args(argv)
     reg = _reg()

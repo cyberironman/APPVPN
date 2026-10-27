@@ -29,8 +29,21 @@ DEFAULT_HEALTH_URL = "https://www.gstatic.com/generate_204"
 
 
 def home() -> Path:
-    p = os.environ.get(ENV_HOME)
-    return Path(p) if p else DEFAULT_HOME
+    """运行数据根目录。
+
+    优先级：APPPROXY_HOME 环境变量 > D:\\AppProxy（用户要求数据放 D 盘，
+    方便随时打开看）> 程序旁边的 AppProxyData（绿色包搬到没有 D 盘的机器上）。
+
+    这里只做判断、不建目录（ensure_dirs 负责建），所以可以随便调。
+    也不做模块级缓存 —— 测试要用 monkeypatch 换根目录。
+    """
+    env = os.environ.get(ENV_HOME)
+    if env:
+        return Path(env)
+    # D:\AppProxy 能用就用它；盘符不存在（别人的电脑、只剩 C 盘的轻薄本）才回退
+    if Path(DEFAULT_HOME.anchor).is_dir():
+        return DEFAULT_HOME
+    return code_root() / "AppProxyData"
 
 
 def code_root() -> Path:

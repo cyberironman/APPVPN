@@ -1,6 +1,6 @@
 # 推送到 GitHub
 
-仓库已经**初始化好并提交了第一个 commit**（73 个文件），只差一个远程地址。
+仓库已经**初始化好并提交了**（含 sing-box 内核，约 130 个文件），只差一个远程地址。
 
 ```
 <本仓库目录>   ← 已是 git 仓库，第一个 commit 已建好（分支 main）
@@ -78,10 +78,39 @@ git push -u origin main
    git ls-files | findstr /I "lines.json profiles.json nodes- .log .lnk"
    :: 期望：没有任何输出
    ```
-3. **（可选）把 sing-box 内核挂到 Releases**：仓库里没有 79 兆字节的 `sing-box.exe`（太大），
-   读者用 `python scripts\fetch_engine.py` 自己拉。如果你想让别人开箱即用，
-   可以发一个 Release，把 `sing-box-1.14.4-windows-amd64.zip` 作为附件传上去，
-   再在 README 里加一行下载链接。
+3. **发一个 Release，把打包好的 zip 传上去**（这才是给普通用户的入口）：
+
+   仓库里已经带了完整的打包脚本，一条命令出发布包：
+
+   ```bat
+   python scripts\build_release.py
+   ```
+
+   产出 `dist\AppProxy-v0.5.0-win64.zip`（59.9 兆字节，内含 exe、Python 运行时、sing-box 内核）。
+   然后到仓库页面右侧 **Releases → Draft a new release**：
+
+   | 字段 | 填什么 |
+   |---|---|
+   | Choose a tag | `v0.5.0`（新建） |
+   | Release title | `分应用代理管家 v0.5.0` |
+   | 描述 | `下载下方 zip → 解压 → 双击 AppProxy.exe。不需要装 Python。` |
+   | Attach binaries | 把 `AppProxy-v0.5.0-win64.zip` 拖进去 |
+
+   发布后 README 里那个 `../../releases` 链接就会指向下载页。
+
+---
+
+## 四之一、关于仓库体积（推之前先知道）
+
+仓库里**包含了 sing-box 内核**（`sing-box.exe` 79 MB + `libcronet.dll` 9 MB），
+这是刻意的：clone 下来就能直接跑，不需要任何额外步骤。
+
+- push 时 GitHub 会打一条 `warning: File ... is 78.30 MB; this is larger than GitHub's
+  recommended maximum file size of 50.00 MB`。**这是警告，不是错误**，推送会正常完成。
+- GitHub 真正的硬限制是单文件 **100 MiB**，79 MB 在允许范围内。
+- 提交进 git 之后对象库压缩到约 35 MB（exe 本身压缩率高），一次 clone 多花十几秒。
+- 内核将来升级时，旧的那份仍留在历史里。真要彻底瘦身，得重写历史
+  （`git filter-repo`），一般没必要。
 
 ---
 

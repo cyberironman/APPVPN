@@ -1,35 +1,33 @@
 # -*- coding: utf-8 -*-
 """生成 Windows 快捷方式（.lnk）—— 每个应用档案一个，双击就能带代理启动。
 
-快捷方式指向的不是程序本身，而是我们的启动器：
-    pythonw.exe appproxy\\launcher.py --profile <id>
-这样双击图标 = 「需要的话先把内核拉起来」+「用这份档案的代理参数启动程序」。
-用 pythonw 而不是 python，是为了不弹黑框。
+快捷方式指向的不是目标程序本身，而是我们的启动器子命令：
+    源码运行：  pythonw.exe -m appproxy.cli profile launch <id>
+    打包运行：  AppProxy.exe profile launch <id>
+两种形态由 appproxy.selfrun 统一处理 —— 打包后没有 pythonw.exe 可用，
+写死解释器路径的话，发出去的 exe 建出来的快捷方式会全部点不开。
 
 本机桌面有两个（C:\\Users\\<user>\\Desktop 与 D:\\OneDrive\\Desktop），
 用户实际看到的是 OneDrive 那个，所以两处都放（见 settings.desktop_dirs）。
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-from . import settings
+from . import selfrun, settings
 
 
 def python_exe() -> Path:
-    """快捷方式指向的解释器：优先 pythonw.exe（无控制台窗口）。
+    """快捷方式的目标可执行文件。
 
-    可用 APPPROXY_PYTHON 指定一个固定解释器 —— 换环境、打包成 exe 后
-    老快捷方式才不会全断（重跑 `profile shortcut` 即可重指）。
+    源码运行时是 pythonw.exe（无控制台窗口），打包后就是 AppProxy.exe 自己。
+    名字保留为 python_exe 是为了不动老调用方；语义已经是「重新拉起本程序的 exe」。
     """
     import os
     fixed = os.environ.get("APPPROXY_PYTHON")
     if fixed and Path(fixed).is_file():
         return Path(fixed)
-    exe = Path(sys.executable)
-    gui = exe.with_name("pythonw.exe")
-    return gui if gui.is_file() else exe
+    return selfrun.self_exe()
 
 
 def launcher_script() -> Path:
@@ -37,7 +35,7 @@ def launcher_script() -> Path:
 
 
 def launcher_arguments(profile_id: str) -> str:
-    return f'"{launcher_script()}" --profile {profile_id}'
+    return selfrun.self_args(["profile", "launch", profile_id])
 
 
 def create_lnk(lnk: Path, target: Path, arguments: str = "", working_dir: str = "",
@@ -87,7 +85,7 @@ def install(profile, *, desktops: bool = True) -> list[Path]:
 
     master = create_lnk(settings.shortcuts_dir() / name,
                         python_exe(), launcher_arguments(profile.id),
-                        str(settings.code_root()), str(icon),
+                        selfrun.self_cwd(), str(icon),
                         f"{profile.name}（{profile.line_id or '直连'}）")
     made.append(master)
     profile.shortcut = str(master)
@@ -97,7 +95,7 @@ def install(profile, *, desktops: bool = True) -> list[Path]:
             try:
                 made.append(create_lnk(desk / name, python_exe(),
                                        launcher_arguments(profile.id),
-                                       str(settings.code_root()), str(icon),
+                                       selfrun.self_cwd(), str(icon),
                                        f"{profile.name}（{profile.line_id or '直连'}）"))
             except Exception:  # noqa: BLE001  某个桌面写不进去（权限/只读）不影响其他
                 continue
@@ -109,18 +107,19 @@ TRAY_NAME = "分应用代理管家.lnk"
 
 def install_tray(desktops: bool = True) -> list[Path]:
     """给托盘程序本身建快捷方式（不是某个应用档案）。"""
-    script = settings.code_root() / "appproxy" / "tray.py"
+    args = selfrun.self_args(["tray"])
+    cwd = selfrun.self_cwd()
     icon = settings.icons_dir() / "tray.ico"
     if not icon.is_file():
         icon = python_exe()
     made = [create_lnk(settings.shortcuts_dir() / TRAY_NAME, python_exe(),
-                       f'"{script}"', str(settings.code_root()), str(icon),
+                       args, cwd, str(icon),
                        "分应用代理管家（托盘）")]
     if desktops:
         for desk in settings.desktop_dirs():
             try:
-                made.append(create_lnk(desk / TRAY_NAME, python_exe(), f'"{script}"',
-                                       str(settings.code_root()), str(icon),
+                made.append(create_lnk(desk / TRAY_NAME, python_exe(), args,
+                                       cwd, str(icon),
                                        "分应用代理管家（托盘）"))
             except Exception:  # noqa: BLE001
                 continue

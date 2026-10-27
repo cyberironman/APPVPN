@@ -107,31 +107,41 @@ WeChat 式主界面：左侧软件列表、右侧详情，设置也在主界面�
 
 ## 快速开始
 
-**要求**：Windows 10 / 11、Python 3.10 以上（`pystray` / `pywin32` 只支持 Windows）。
+### 普通用户：下载 → 解压 → 双击
+
+1. 到 [Releases](../../releases) 下载 `AppProxy-<版本>-win64.zip`
+2. 解压到任意目录（例如 `D:\AppProxy-软件\`）
+3. 双击 `AppProxy.exe`
+
+**不需要装 Python，不需要装任何依赖，不需要跑任何脚本。** 内核、运行时、界面全在包里。
+
+第一次双击会直接弹出接线页 —— 填订阅地址，或者选一个你已经在用的客户端的本地端口。
+
+### 从源码跑（开发者）
 
 ```bat
 git clone <本仓库地址>
 cd <仓库目录>
 
-scripts\setup.bat                :: 装依赖
-python scripts\fetch_engine.py   :: 拉 sing-box 内核（约 79 兆字节，只拉一次）
-
-scripts\start_tray.bat           :: 起托盘图标（后台，无控制台窗口）
+scripts\setup.bat      :: 只装 Python 依赖，内核已经在仓库里了
+scripts\start_tray.bat :: 起托盘图标
 ```
 
-第一次打开主界面，会看到接线页 —— 填你的订阅地址、或者已有客户端的本地端口，二选一。
+内核随仓库一起 clone 下来，**没有「必须先拉内核」这一步**。
 
-主界面：双击托盘图标，或 `scripts\start_gui.bat`。
+### 自己打包
 
-> 内核不在仓库里（79 兆字节太大），必须跑一次 `fetch_engine.py`。
-> 也可以自己从 [SagerNet/sing-box](https://github.com/SagerNet/sing-box/releases) 下载
-> `sing-box-1.14.4-windows-amd64.zip`，解压到 `third_party\sing-box\sing-box-1.14.4-windows-amd64\`。
+```bat
+python scripts\build_release.py
+```
+
+产出 `dist\AppProxy-v<版本>-win64.zip`，就是上面那个给普通用户的包。
 
 ---
 
 ## 日常怎么用
 
-1. 双击桌面「分应用代理管家」→ 托盘出现（**不会预热任何内核**）
+1. 双击 `AppProxy.exe` → 托盘出现（**不会预热任何内核**）
 2. 双击托盘图标 → 主界面
 3. 左侧选一个软件 → 右侧点「启动」→ 它那条线路的内核起来（约 1 秒）→ 程序带着代理打开
 4. 用完直接关程序。5 秒内后台发现没人在用，内核自动退场
@@ -246,11 +256,13 @@ pywebview（WebView2）在部分机器上环境创建失败时只留一片白，
 │  │  ├─ api.py              FastAPI 接口
 │  │  └─ static/index.html   单页前端（无框架）
 │  └─ data/apps_need_proxy.json  「明显需要代理」清单
-├─ scripts/                  setup.bat / start_tray.bat / start_gui.bat / fetch_engine.py
+├─ scripts/                  setup.bat / start_tray.bat / start_gui.bat
+│                            build_release.py（打发布包）/ fetch_engine.py（升级内核）
+├─ packaging/                PyInstaller 配置 + exe 入口（出 AppProxy.exe 用）
 ├─ tests/                    单测 + 端到端脚本 + 出图脚本
 ├─ tools/verify_tun.py       TUN 一键自检（起内核、查网卡、出报告）
 ├─ docs/                     截图与文档
-├─ third_party/              sing-box 内核（体积排除，见 fetch_engine.py）+ 来源与许可
+├─ third_party/              sing-box 内核（随仓库分发，clone 即有）+ 来源与许可
 └─ requirements.txt
 ```
 

@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import settings
+from . import selfrun, settings
 
 TASK = "AppProxyTun"
 
@@ -143,14 +143,11 @@ def _shell_runas(exe: Path, args: str, cwd: Path) -> int:
 
 
 def _launch_elevated_install(binary: Path, cfg: Path) -> int:
-    """挑一个能跑 `-m appproxy.elevate` 的解释器（优先 pythonw，不闪黑框）。"""
-    py = Path(sys.executable)
-    pyw = py.with_name("pythonw.exe")
-    exe = pyw if pyw.is_file() else py
-    root = settings.code_root()
-    args = (f'-m appproxy.elevate install '
-            f'--binary "{binary}" --config "{cfg}"')
-    return _shell_runas(exe, args, root)
+    """把自己以 `elevate install` 子命令再拉起一次（打包后是 AppProxy.exe）。"""
+    exe = selfrun.self_exe()
+    args = selfrun.self_args(["elevate", "install",
+                              "--binary", str(binary), "--config", str(cfg)])
+    return _shell_runas(exe, args, selfrun.self_cwd())
 
 
 def install_with_uac(binary: Path, cfg: Path, timeout: float = UAC_TIMEOUT) -> str:

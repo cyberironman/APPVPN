@@ -27,7 +27,7 @@ SKIP_WORDS = (
 )
 
 # 这些 exe 出现在开始菜单里也没意义（要么是我们自己，要么是系统工具/壳）
-SKIP_EXES = {"python.exe", "pythonw.exe", "unins000.exe", "uninst.exe",
+SKIP_EXES = {"python.exe", "pythonw.exe", "appproxy.exe", "unins000.exe", "uninst.exe",
              "chrome_proxy.exe", "powershell.exe", "pwsh.exe", "wscript.exe",
              "cscript.exe", "mshta.exe", "conhost.exe", "rundll32.exe"}
 

@@ -26,7 +26,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from appproxy import pool, settings  # noqa: E402
+from appproxy import pool, selfrun, settings  # noqa: E402
 
 TITLE = "分应用代理管家"
 GC_INTERVAL = 5.0           # 秒；回收检查频率
@@ -277,18 +277,19 @@ def _view_url(port: int, view: str) -> str:
 
 
 def _spawn_gui(view: str = "") -> bool:
-    """另起一个界面进程（服务 + 窗口都在它里面）。"""
+    """另起一个界面进程（服务 + 窗口都在它里面）。
+
+    打包成 exe 后不能再「用解释器跑 gui.py」，必须重新执行 exe 的 gui 子命令 ——
+    这段差异收在 selfrun 里。
+    """
     import subprocess
 
-    script = settings.code_root() / "appproxy" / "gui.py"
-    if not script.is_file():
-        log(f"[!!] 找不到界面程序 {script}")
+    if not selfrun.is_frozen() and not (settings.code_root() / "appproxy" / "gui.py").is_file():
+        log("[!!] 找不到界面程序 appproxy/gui.py")
         return False
-    args = [sys.executable, str(script)]
-    if view:
-        args += ["--view", view]
+    args = selfrun.self_argv(["gui"] + (["--view", view] if view else []))
     try:
-        subprocess.Popen(args, cwd=str(settings.code_root()),
+        subprocess.Popen(args, cwd=selfrun.self_cwd(),
                          creationflags=0x00000008)      # DETACHED_PROCESS
     except OSError as e:
         log(f"[!!] 起界面进程失败：{e}")

@@ -23,10 +23,12 @@ from collections import defaultdict
 
 import psutil
 
+from . import selfrun
 from .profiles import AppProfile
 
 # 我们自己的进程，永远不算「某个档案在跑」
-SELF_NAMES = {"python.exe", "pythonw.exe", "py.exe"}
+# （打包成 AppProxy.exe 后 exe 名变了，所以名字从 selfrun 取，别写死 python）
+SELF_NAMES = selfrun.self_process_names()
 
 # Chrome 对带空格的参数是**整个参数**加引号：
 #     "--user-data-dir=D:\a b\data"

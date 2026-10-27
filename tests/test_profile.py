@@ -205,7 +205,14 @@ def test_shortcut_install_and_remove(tmp_path, tmp_home, monkeypatch):
 
 
 def test_launcher_arguments_point_to_launcher(tmp_home):
+    """快捷方式不再指向 launcher.py 这个脚本文件，而是走 `profile launch` 子命令。
+
+    原因：打包成 AppProxy.exe 之后没有 Python 解释器、也没有 .py 文件可跑，
+    写死脚本路径的快捷方式会全部点不开。两种形态由 selfrun 统一。
+    """
     args = shortcut.launcher_arguments("chrome-work")
-    assert "launcher.py" in args and "--profile chrome-work" in args
+    assert "profile" in args and "launch" in args and "chrome-work" in args
+    # 源码模式下必须显式带模块入口，否则 exe 以外的方式拉不起来
+    assert "-m" in args and "appproxy.cli" in args
     assert shortcut.launcher_script().name == "launcher.py"
     assert shortcut.python_exe().name.lower().startswith("python")

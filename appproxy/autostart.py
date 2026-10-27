@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import settings, shortcut
+from . import selfrun, settings, shortcut
 
 LNK_NAME = "分应用代理管家.lnk"
 
@@ -30,6 +30,7 @@ def target_lnk() -> Path:
 
 
 def tray_script() -> Path:
+    """源码模式下托盘的入口脚本；打包后没有这个文件，改用 exe 的 tray 子命令。"""
     return settings.code_root() / "appproxy" / "tray.py"
 
 
@@ -40,8 +41,9 @@ def enabled() -> bool:
 def enable() -> Path:
     icon = settings.icons_dir() / "tray.ico"
     return shortcut.create_lnk(
-        target_lnk(), shortcut.python_exe(), f'"{tray_script()}"',
-        str(settings.code_root()), str(icon if icon.is_file() else shortcut.python_exe()),
+        target_lnk(), shortcut.python_exe(), selfrun.self_args(["tray"]),
+        selfrun.self_cwd(),
+        str(icon if icon.is_file() else shortcut.python_exe()),
         "分应用代理管家（开机自启）")
 
 

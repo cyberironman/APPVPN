@@ -4,6 +4,37 @@
 
 ---
 
+## v0.5.0 补充：改成真正开箱即用的分发方式
+
+**之前的问题**：内核 79 MB 被排除在仓库外，README 让用户 clone 完再跑
+`python scripts\fetch_engine.py`。这不叫软件 —— 一个要让用户自己跑脚本才用得起来的东西，
+等于把安装工作转嫁给用户。
+
+**改**
+
+- **sing-box 内核进仓库**。GitHub 对单文件只是 50 MB 警告、100 MiB 才硬拒，
+  79 MB 完全推得上去；对象库压缩后约 35 MB。`clone` 下来就有内核，不需要额外步骤。
+  `scripts/fetch_engine.py` 降级为「升级 / 修复内核」用，不再是必跑。
+- **打包成 exe 分发**：`packaging/AppProxy.spec` + `packaging/entry.py` +
+  `scripts/build_release.py`，一条命令出 `AppProxy-v0.5.0-win64.zip`（59.9 MB）。
+  用户下载 → 解压 → 双击 `AppProxy.exe`，**不装 Python、不装依赖、不跑脚本**。
+  `onedir` 而不是 `onefile`：不用每次启动把 88 MB 内核解压到临时目录，秒开。
+- **`appproxy/selfrun.py`**：统一「把本程序以某个子命令再拉起一次」。
+  打包后没有 `pythonw.exe` 和 `.py` 文件了，原来写死解释器路径的三处（快捷方式、
+  提权子进程、托盘切界面）全都会断。命令行新增内部子命令 `elevate`。
+- **数据目录回退**：`home()` 原来写死 `D:\AppProxy`，搬到没有 D 盘的机器上会直接失败。
+  改为 `APPPROXY_HOME` > `D:\AppProxy`（有 D 盘就用）> 程序旁边的 `AppProxyData`。
+- 「我们自己」的进程名从写死的 `python.exe` 改为动态取（`selfrun.self_process_names()`），
+  否则打包后 `AppProxy.exe` 会被当成「某个档案在运行」，内核永远不回收。
+
+**测试**
+
+- 新增 `tests/test_selfrun.py`（4 项）、`tests/test_paths.py`（4 项），单测总数 **111 项**。
+- 端到端：把 zip 解压到干净目录后直接 `AppProxy.exe` 启动 —— 内核识别正常
+  （`sing-box version 1.14.4`）、界面服务 200、`needs_setup=true`、首页 47 KB。
+
+---
+
 ## v0.5.0 — 步骤 5：TUN 兜底 + 需代理清单 + 新用户接线
 
 **新增**
