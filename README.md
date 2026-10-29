@@ -6,14 +6,14 @@ Windows per-app proxy manager with independent routing for multiple Chrome insta
 
 同一个软件可以开多个图标、各走不同线路，互不干扰；线路只在它对应的那个程序启动时才起来，程序关掉就自动退场。Windows 桌面工具，Python + sing-box。
 
-> 版本 0.6.1 ｜ 平台 Windows 10 / 11 ｜ 免费、无广告、不收集数据
+> 版本 0.6.2 ｜ 平台 Windows 10 / 11 ｜ 免费、无广告、不收集数据
 >
 > **下载就能用**，两种形态任选，都**不需要装 Python、不需要装依赖、不需要跑任何脚本**：
 >
 > | 形态 | 文件 | 怎么用 |
 > |---|---|---|
-> | **安装版**（推荐给普通用户） | `AppProxy-v0.6.1-win64-setup.exe` | 双击 → 下一步 → **自己选安装目录** → 完成 |
-> | **绿色版**（放 U 盘、拷着走） | `AppProxy-v0.6.1-win64.zip` | 解压到任意位置 → 双击 `AppProxy.exe` |
+> | **安装版**（推荐给普通用户） | `AppProxy-v0.6.2-win64-setup.exe` | 双击 → 下一步 → **自己选安装目录** → 完成 |
+> | **绿色版**（放 U 盘、拷着走） | `AppProxy-v0.6.2-win64.zip` | 解压到任意位置 → 双击 `AppProxy.exe` |
 >
 > 到 [Releases](../../releases) 下载。少什么运行库，软件会自己检查出来并给你一键安装的按钮。
 
