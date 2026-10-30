@@ -82,8 +82,12 @@ AppProxy.exe         主程序（双击它）
 _internal\\           运行时、界面资源、sing-box 内核，别删
 portable.txt         绿色版标记，决定数据写在旁边，别删
 使用说明.txt         本文件
+LICENSE.txt          本软件的 MIT 许可证
 
-内核来源：https://github.com/SagerNet/sing-box （GPL-3.0-or-later，许可见包内 LICENSE）
+许可
+----
+本软件：MIT（见同目录 LICENSE.txt）—— 可自由使用、修改、再分发。
+内核来源：https://github.com/SagerNet/sing-box（GPL-3.0-or-later，许可见包内 _internal 下的 LICENSE）
 虚拟网卡驱动：Wintun（https://www.wintun.net/）
 """
 
@@ -219,6 +223,10 @@ def smoke() -> None:
 def _write_flags_and_readme(ver: str) -> None:
     (APP / PORTABLE_FLAG).write_text(PORTABLE_TXT, encoding="utf-8")
     (APP / "使用说明.txt").write_text(README_TXT.format(ver=ver), encoding="utf-8")
+    # 许可要能被用户看见，不能只躺在 _internal 里
+    lic = ROOT / "LICENSE"
+    if lic.is_file():
+        (APP / "LICENSE.txt").write_text(lic.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def pack_zip(ver: str) -> Path:

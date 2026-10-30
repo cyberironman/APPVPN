@@ -124,6 +124,10 @@ class Tray:
 
         有了它，命令行就能让正在跑的托盘优雅退出（`tray --quit`），
         而不是靠杀进程留下一个"幽灵图标"。
+
+        端口被占时要分清是谁：**答 pong = 我们自己已经在跑**，这次就该退出；
+        不答 = 是别的程序恰好占了 10896，此时**不能**当成"已有实例"直接退出 ——
+        那样用户看到的就是"双击没反应"。降级为无锁运行，并在日志里说清楚。
         """
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -132,7 +136,10 @@ class Tray:
             s.settimeout(1.0)
         except OSError:
             s.close()
-            return False
+            if _answers_ping():
+                return False
+            log(f"[WARN] 端口 {LOCK_PORT} 被别的程序占用，本次以无单实例锁运行")
+            return True
         self._lock = s
         threading.Thread(target=self._serve, daemon=True).start()
         return True
@@ -416,12 +423,27 @@ class Tray:
                 except Exception:  # noqa: BLE001  回收失败不能让托盘停摆
                     pass
                 try:
+                    for msg in pool.heal():
+                        log(f"[自愈] {msg}")
+                except Exception as e:  # noqa: BLE001  救不活也不能拖死托盘
+                    log(f"[自愈] 巡检出错：{e}")
+                try:
                     self.refresh()
                 except Exception:  # noqa: BLE001
                     pass
 
         threading.Thread(target=ticker, daemon=True).start()
         self.icon.run()
+
+
+def _answers_ping(timeout: float = 1.0) -> bool:
+    """锁端口上是不是「我们自己的托盘」在应答 —— 用来区分撞端口和重复启动。"""
+    try:
+        with socket.create_connection(("127.0.0.1", LOCK_PORT), timeout) as s:
+            s.sendall(b"ping")
+            return s.recv(16) == b"pong"
+    except OSError:
+        return False
 
 
 def send_command(cmd: str, timeout: float = 3.0) -> str:

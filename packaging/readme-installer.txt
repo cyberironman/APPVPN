@@ -1,4 +1,4 @@
-分应用代理管家 v0.6.2 · 安装版
+分应用代理管家 v0.6.3 · 安装版
 ================================================
 
 怎么用
@@ -37,7 +37,11 @@
 AppProxy.exe         主程序
 _internal\           运行时、界面资源、sing-box 内核，别删
 AppProxyData\        你的数据（订阅、日志、每个软件的配置）
+LICENSE.txt          本软件的 MIT 许可证
 unins000.exe         卸载程序
 
-内核来源：https://github.com/SagerNet/sing-box （GPL-3.0-or-later，许可见包内 LICENSE）
+许可
+----
+本软件：MIT（见安装目录下 LICENSE.txt）—— 可自由使用、修改、再分发。
+内核来源：https://github.com/SagerNet/sing-box（GPL-3.0-or-later，许可见 _internal 下的 LICENSE）
 虚拟网卡驱动：Wintun（https://www.wintun.net/）

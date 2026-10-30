@@ -44,7 +44,7 @@
 上层只调用这些，不直接碰内核。
 """
 
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 
 from .models import Line, Node  # noqa: F401
 from .profiles import AppProfile, LaunchPlan, ProfileStore  # noqa: F401

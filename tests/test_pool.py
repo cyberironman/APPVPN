@@ -2,9 +2,13 @@
 """内核池与进程探测的单元测试（不碰真实进程、不碰真实内核）。"""
 from __future__ import annotations
 
+import pytest
+
+from appproxy import profiles as profiles_store
 from appproxy import pool, procwatch, settings
 from appproxy.models import Line
 from appproxy.profiles import AppProfile
+from appproxy.registry import Registry
 
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
@@ -256,3 +260,88 @@ def test_release_keeps_kernel_if_other_program_uses_line(tmp_home, monkeypatch):
     msg = pool.release(reg, store, a)
     assert "仍有" in msg
     assert stopped == [], "另一个软件还在用，不该停内核"
+
+
+# --------------------------------------------------------------------------- 自愈
+@pytest.fixture(autouse=True)
+def _reset_heal():
+    pool._HEAL_STATE.clear()
+    yield
+    pool._HEAL_STATE.clear()
+
+
+def _heal_setup(tmp_home, monkeypatch, *, running: bool):
+    settings.ensure_dirs()
+    reg = Registry().load()
+    reg.upsert(Line(id="alpha", name="alpha", http_port=20000, socks_port=20001))
+    store = profiles_store.ProfileStore(tmp_home / "profiles.json")
+    p = _generic("a")
+    store.profiles = [p]
+
+    snap = procwatch.Snapshot()
+    if running:
+        snap.by_exe[procwatch._norm(p.exe)] = [111]
+    monkeypatch.setattr(pool.coreproc, "port_open", lambda *a, **k: False)
+    return reg, store, snap
+
+
+def test_heal_leaves_starting_kernel_alone(tmp_home, monkeypatch):
+    """进程还在 = 内核只是在启动，绝不能动它（10-29 的教训）。"""
+    reg, store, snap = _heal_setup(tmp_home, monkeypatch, running=True)
+    monkeypatch.setattr(pool.coreproc, "pids_by_config", lambda cfg: [123])
+    called: list = []
+    monkeypatch.setattr(pool, "ensure_core", lambda *a, **k: called.append(1) or "x")
+
+    for i in range(pool.HEAL_AFTER + 5):
+        assert pool.heal(reg, store, snap=snap, now=i) == []
+    assert called == [], "进程还在的时候不该重启"
+
+
+def test_heal_restarts_after_patience(tmp_home, monkeypatch):
+    """进程没了、端口也不通，连续 HEAL_AFTER 轮之后才重启。"""
+    reg, store, snap = _heal_setup(tmp_home, monkeypatch, running=True)
+    monkeypatch.setattr(pool.coreproc, "pids_by_config", lambda cfg: [])
+    called: list = []
+    monkeypatch.setattr(pool, "ensure_core", lambda *a, **k: called.append(1) or "已启动")
+
+    for i in range(pool.HEAL_AFTER - 1):
+        assert pool.heal(reg, store, snap=snap, now=i) == [], "还没到耐心上限"
+    msgs = pool.heal(reg, store, snap=snap, now=pool.HEAL_AFTER)
+    assert len(called) == 1 and "自动拉起" in msgs[0]
+
+
+def test_heal_ignores_idle_lines(tmp_home, monkeypatch):
+    """没有程序在用的线路归 gc 管，自愈不该去抢着拉起来。"""
+    reg, store, snap = _heal_setup(tmp_home, monkeypatch, running=False)
+    monkeypatch.setattr(pool.coreproc, "pids_by_config", lambda cfg: [])
+    called: list = []
+    monkeypatch.setattr(pool, "ensure_core", lambda *a, **k: called.append(1) or "x")
+
+    for i in range(pool.HEAL_AFTER + 5):
+        assert pool.heal(reg, store, snap=snap, now=i) == []
+    assert called == []
+
+
+def test_heal_backs_off_when_restart_fails(tmp_home, monkeypatch):
+    """起不来就按退避等待，不能每轮硬撞。"""
+    reg, store, snap = _heal_setup(tmp_home, monkeypatch, running=True)
+    monkeypatch.setattr(pool.coreproc, "pids_by_config", lambda cfg: [])
+    tries: list = []
+
+    def boom(*a, **k):
+        tries.append(1)
+        raise RuntimeError("内核丢了")
+
+    monkeypatch.setattr(pool, "ensure_core", boom)
+
+    for i in range(pool.HEAL_AFTER - 1):
+        pool.heal(reg, store, snap=snap, now=i)
+    msgs = pool.heal(reg, store, snap=snap, now=pool.HEAL_AFTER)
+    assert len(tries) == 1 and "起不来" in msgs[0]
+    # 退避期内不再尝试
+    for i in range(pool.HEAL_AFTER + 1, pool.HEAL_AFTER + pool.HEAL_BACKOFF[0]):
+        pool.heal(reg, store, snap=snap, now=i)
+    assert len(tries) == 1
+    # 退避到期后允许再试
+    pool.heal(reg, store, snap=snap, now=pool.HEAL_AFTER + pool.HEAL_BACKOFF[0])
+    assert len(tries) == 2

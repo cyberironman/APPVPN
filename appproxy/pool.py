@@ -170,6 +170,58 @@ def gc(reg: Registry | None = None, store: ProfileStore | None = None,
     return done
 
 
+# --------------------------------------------------------------------------- 自愈
+# 判死要慢，抢救要快 —— 这是被教训出来的：
+#   1. 刚起的内核要一两秒才开始监听端口。把「端口还没通」当成「死了」，
+#      就变成每轮杀一次活着的内核，整机网络抖到没法用。
+#   2. 所以先看**进程在不在**（按命令行里的 config 路径认，不会误认别人的内核）；
+#      进程在 = 还在启动，什么都不做。
+#   3. 进程不在、端口也不通，连续 HEAL_AFTER 轮才判定真死了。
+#   4. 重启失败按 60 → 120 → 240 → 300 秒退避，不允许每分钟硬撞一次。
+_HEAL_STATE: dict[str, dict[str, Any]] = {}
+HEAL_AFTER = 8                    # 托盘 6 秒一轮 ≈ 48 秒，够慢
+HEAL_BACKOFF = (60, 120, 240, 300)
+
+
+def heal(reg: Registry | None = None, store: ProfileStore | None = None,
+         *, snap: procwatch.Snapshot | None = None, now: float | None = None) -> list[str]:
+    """把半路死掉的内核拉回来。只救「还有程序在用」的线路，返回给人看的说明。"""
+    reg = reg or Registry().load()
+    store = store or ProfileStore().load()
+    snap = snap or procwatch.snapshot()
+    alive = procwatch.alive_map(store.profiles, snap)
+    now = time.time() if now is None else now
+    out: list[str] = []
+
+    for line in reg.lines:
+        users = users_of(line.id, store.profiles)
+        if not any(alive.get(p.id) for p in users):
+            _HEAL_STATE.pop(line.id, None)     # 没人用了，交回给 gc
+            continue
+        st = _HEAL_STATE.setdefault(
+            line.id, {"fails": 0, "next_at": 0.0, "restarts": 0})
+        if now < st["next_at"]:
+            continue
+        if coreproc.port_open(line.http_port):
+            st.update(fails=0, restarts=0, next_at=0.0)
+            continue
+        if coreproc.pids_by_config(line.config_path()):
+            continue                            # 进程还在，只是还没开始听，别动
+        st["fails"] += 1
+        if st["fails"] < HEAL_AFTER:
+            continue
+        try:
+            msg = ensure_core(reg, line, allow_fetch=False)
+            out.append(f"{line.name} 的内核掉线了，已自动拉起（{msg}）")
+            st.update(fails=0, next_at=0.0)
+        except Exception as e:                  # noqa: BLE001  救不活也要说清楚
+            wait = HEAL_BACKOFF[min(st["restarts"], len(HEAL_BACKOFF) - 1)]
+            st["next_at"] = now + wait
+            st["restarts"] = min(st["restarts"] + 1, len(HEAL_BACKOFF) - 1)
+            out.append(f"{line.name} 的内核起不来：{e}（{wait} 秒后再试）")
+    return out
+
+
 # --------------------------------------------------------------------------- 关闭
 def release(reg: Registry, store: ProfileStore, profile: AppProfile,
             *, force: bool = False) -> str:
