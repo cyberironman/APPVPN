@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from appproxy import gui, settings  # noqa: E402
+from appproxy import gui, localport, settings  # noqa: E402
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -35,7 +35,7 @@ def main() -> int:
     argv = sys.argv[1:]
     settings.ensure_dirs()
 
-    port = gui.GUI_PORT if not gui._port_open(gui.GUI_PORT, timeout=0.2) else gui._free_port()
+    port = localport.alloc("gui_http_smoke")
     box = gui.ServerBox()
     box.port = port
     threading.Thread(target=gui.serve_http, args=(port, box), daemon=True).start()

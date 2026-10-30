@@ -41,7 +41,7 @@ from appproxy import coreproc, latency, settings, singconf, subscription, xrayco
 from appproxy import appscan, autostart, icons, profiles, sysproxy  # noqa: E402
 from appproxy import shortcut as shortcutmod  # noqa: E402
 from appproxy.models import Line  # noqa: E402
-from appproxy.registry import Registry  # noqa: E402
+from appproxy.registry import PORT_MIN, Registry  # noqa: E402
 
 OK = "[OK]"
 FAIL = "[!!]"
@@ -912,7 +912,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("bin", help="显示两个内核的路径与版本").set_defaults(fn=cmd_xray)
 
     pports = sub.add_parser("ports", help="看端口占用")
-    pports.add_argument("--start", type=int, default=10880)
+    # 默认从本程序的随机段起点开始看，不再默认扫 108xx 祖传段。
+    pports.add_argument("--start", type=int, default=PORT_MIN)
     pports.add_argument("--count", type=int, default=40)
     pports.set_defaults(fn=cmd_ports)
 

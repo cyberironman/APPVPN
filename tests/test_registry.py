@@ -31,7 +31,13 @@ def test_registry_roundtrip(tmp_home):
 
     again = Registry().load()
     assert [l.id for l in again.lines] == ["alpha", "lan"]
-    assert again.require("alpha").socks_port == 10911
+    # 端口进 registry 就会被重新分配到随机段（见 registry.alloc_ports），
+    # 所以这里断言的是「关系」而不是某个具体数字：socks 永远比 http 大 1。
+    alpha = again.require("alpha")
+    from appproxy.registry import PORT_MAX, PORT_MIN
+
+    assert alpha.socks_port == alpha.http_port + 1
+    assert PORT_MIN <= alpha.http_port < PORT_MAX
 
     again.upsert(Line(id="alpha", name="改过", http_port=10910))
     again.save()

@@ -20,7 +20,9 @@
     找不到东西 —— 现在「打开主界面」和「设置…」两个口子都通向同一个界面，
     主界面里再明显放一个齿轮按钮，三条路都能到设置。
 
-单实例：靠占用本地端口 10896 实现，第二个实例会自己退出。
+单实例：靠占住一个**随机分配**的本地端口实现（见 `localport`），
+第二个实例先 ping 一下：答 pong 才说明真的已经有一个在跑，自己退出；
+没人答就是端口撞了别人，换个号继续跑，绝不静默退出。
 所有耗时动作（起内核、测速、扫描）都丢后台线程，托盘菜单不卡。
 """
 from __future__ import annotations
@@ -44,11 +46,13 @@ if sys.stderr is None:
 import pystray  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
-from appproxy import (coreproc, gui, launcher, pool, procwatch,  # noqa: E402
-                      profiles, settings, shortcut, sysproxy)
+from appproxy import (coreproc, gui, launcher, localport, pool,  # noqa: E402
+                      procwatch, profiles, settings, shortcut, sysproxy)
 from appproxy.registry import Registry  # noqa: E402
 
-LOCK_PORT = 10896
+# 单实例锁 + 控制口。以前写死 10896，落在各种代理工具的祖传段里，被别人占掉
+# 就表现成「双击没反应」。现在由 localport 随机分（10000-19998），持久化沿用。
+CTL_SLOT = "ctl"
 TITLE = "分应用代理管家"
 
 C_OK = (34, 160, 90)
@@ -120,27 +124,26 @@ class Tray:
 
     # -- 单实例 + 控制通道 ---------------------------------------------------
     def acquire_single(self) -> bool:
-        """占住本地端口当单实例锁，同时把它当作一个极简控制通道。
+        """占住随机端口当单实例锁，同时把它当作一个极简控制通道。
 
         有了它，命令行就能让正在跑的托盘优雅退出（`tray --quit`），
         而不是靠杀进程留下一个"幽灵图标"。
 
-        端口被占时要分清是谁：**答 pong = 我们自己已经在跑**，这次就该退出；
-        不答 = 是别的程序恰好占了 10896，此时**不能**当成"已有实例"直接退出 ——
-        那样用户看到的就是"双击没反应"。降级为无锁运行，并在日志里说清楚。
+        端口以前写死 10896，被别的程序占掉就当成「已有实例」静默退出 ——
+        用户看到的是「双击没反应」。现在端口随机（见 `localport`），分三步：
+          1. 上次那个号若有程序在答 `pong` → 确实是自己在跑，本次退出；
+          2. 没人答 → 那是残留或别人占的号，放心换一个；
+          3. 一个都挑不到 → 降级为无锁运行并写明日志，绝不静默退出。
         """
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            s.bind(("127.0.0.1", LOCK_PORT))
-            s.listen(4)
-            s.settimeout(1.0)
-        except OSError:
-            s.close()
-            if _answers_ping():
-                return False
-            log(f"[WARN] 端口 {LOCK_PORT} 被别的程序占用，本次以无单实例锁运行")
+        old = localport.get(CTL_SLOT)
+        if old and _answers_ping(old):
+            return False
+        s = localport.bind(CTL_SLOT)
+        if s is None:
+            log("[WARN] 找不到可用的控制口，本次以无单实例锁运行")
             return True
         self._lock = s
+        log(f"控制口 {s.getsockname()[1]}（随机分配，非固定端口）")
         threading.Thread(target=self._serve, daemon=True).start()
         return True
 
@@ -436,10 +439,12 @@ class Tray:
         self.icon.run()
 
 
-def _answers_ping(timeout: float = 1.0) -> bool:
-    """锁端口上是不是「我们自己的托盘」在应答 —— 用来区分撞端口和重复启动。"""
+def _answers_ping(port: int, timeout: float = 1.0) -> bool:
+    """这个端口上是不是「我们自己的托盘」在应答 —— 用来区分撞端口和重复启动。"""
+    if not port:
+        return False
     try:
-        with socket.create_connection(("127.0.0.1", LOCK_PORT), timeout) as s:
+        with socket.create_connection(("127.0.0.1", port), timeout) as s:
             s.sendall(b"ping")
             return s.recv(16) == b"pong"
     except OSError:
@@ -448,7 +453,10 @@ def _answers_ping(timeout: float = 1.0) -> bool:
 
 def send_command(cmd: str, timeout: float = 3.0) -> str:
     """给正在跑的托盘发一条指令（quit / ping）。没在跑会抛 OSError。"""
-    with socket.create_connection(("127.0.0.1", LOCK_PORT), timeout) as s:
+    port = localport.get(CTL_SLOT)
+    if not port:
+        raise OSError("控制口还没分配过（托盘从未在这台机器上启动）")
+    with socket.create_connection(("127.0.0.1", port), timeout) as s:
         s.sendall(cmd.encode("utf-8"))
         return s.recv(64).decode("utf-8", "replace")
 

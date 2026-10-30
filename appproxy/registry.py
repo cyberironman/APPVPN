@@ -51,19 +51,44 @@ def _port_free(port: int) -> bool:
 #   装了两份、或者跟别的代理工具撞车，就是「端口被占 → 内核起不来 → 那个软件
 #   没有网络」。随机散开以后，两台机器撞到同一个端口的概率比中彩票还低。
 #
-# 区间为什么是 10000–29998：
+# 区间为什么是 15002–19998（2026-10-30 二次收窄）：
 #   * 低于 1024 要管理员权限（本项目主用法是零权限）；
-#   * Windows 默认动态端口从 49152 起，落在那里面等于跟系统临时连接抢端口；
+#   * **本机 Windows 动态端口段被调成了 1024–15000**（`netsh int ipv4
+#     show dynamicport tcp` 实测：启动 1024、端口数 13977）。出站连接会从这
+#     一段里随机取本地端口，listen 端口落进去迟早撞 `bind: EADDRINUSE`。
+#     所以下限必须压在 15000 以上 —— 这是本项目与动态段之间唯一的护栏。
+#   * 49152 以上是 Windows 默认动态段的位置，保守整段避开；
 #   * 10800–10999 是各种代理工具的祖传段（v2rayN 10808/10809、clash 7890、
-#     我们自己的另一个项目 10878 / 10888 / 10948…），整段避开。
-PORT_MIN = 10000
-PORT_MAX = 29998          # 偶数上限，保证 port+1 也不越界
+#     我们自己的另一个项目 10878 / 10888 / 10948…），整段避开；
+#   * **本机还有两个兄弟程序**（Codex 管家、Chrome 管家）。三段划分见下方
+#     `_AVOID_RANGES` 上方的表，同时开也不会挑到同一个端口。
+PORT_MIN = 15002
+PORT_MAX = 19998          # 偶数上限，保证 port+1 也不越界
 
+
+def _audit(msg: str) -> None:
+    """端口变更写一份流水（logs/ports.log），出事能倒查哪天换了什么。"""
+    try:
+        d = settings.logs_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / "ports.log", "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except OSError:
+        pass
+
+# 本机三个代理项目的端口段（2026-10-30 定稿，**改一处必须同步另两处**）：
+#     分应用代理管家 AppProxy    15002 – 19998
+#     分资料代理 Chrome 管家     20000 – 39998
+#     分应用代理 Codex 管家      40000 – 49148
+# 三段首尾相接、互不重叠，全部落在「动态段之上、49152 之下」的安全区。
 _AVOID_RANGES: tuple[tuple[int, int], ...] = (
+    (1, 1023),             # 需要管理员权限
     (1080, 1081),          # 最常见的单端口代理
     (7890, 7899),          # Clash 系
+    (1024, 15000),         # 本机动态端口段（出站连接会随机占用）
     (10800, 10999),        # v2rayN / v2rayN 衍生 / 本项目其它组件
     (18488, 18489),        # 本机既有服务已占的一段
+    (49152, 65535),        # Windows 默认动态段，保守整段避开
 )
 
 _excluded_cache: tuple[float, list[tuple[int, int]]] | None = None
@@ -118,6 +143,12 @@ class Registry:
                 self.lines.append(Line.from_dict(item))
             except (TypeError, ValueError):
                 continue
+        # 端口体检：老版本留下的 109xx 固定端口、被外部占用、两线重复，
+        # 在这里一次性换掉（换完会 save，见 heal_ports）。
+        try:
+            self.heal_ports(save=True)
+        except Exception as e:  # noqa: BLE001  体检失败不能挡住启动
+            _audit(f"端口体检异常：{e}")
         return self
 
     def save(self) -> Path:
@@ -151,9 +182,79 @@ class Registry:
         self.lines = [l for l in self.lines if l.id != line_id]
         return len(self.lines) != before
 
+    # ---------------------------------------------------------------- 端口体检
+    def _core_running_on(self, line: Line, port: int) -> bool:
+        """这个端口是不是**本线路自己的内核**在听（是的话不能动它）。"""
+        try:
+            from . import coreproc
+            if not coreproc.port_open(port):
+                return False
+            return bool(coreproc.pids_by_config(line.config_path()))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def heal_ports(self, *, save: bool = True) -> list[tuple[str, int, int]]:
+        """启动时给已有线路做端口体检，把「不该用 / 用不了」的换掉。
+
+        会重挑的四种情况（都实际踩到过）：
+          1. 端口在 10800–10999 这类祖传段 —— 和 v2rayN 抢；
+          2. 端口被别的程序占着 —— 内核起不来，表现是「这个软件没网」；
+          3. 两条线路分了同一个端口 —— 后起的那条永远起不来；
+          4. 端口落在随机区间之外（老版本留下的 10930/10940/10950）。
+
+        自家内核正跑在端口上的**不动**，避免「体检把用户踢断网」；
+        等那条线路停掉、下次启动时自然换过来。
+
+        返回 [(线路 id, 旧端口, 新端口)]。
+        """
+        used: set[int] = set()
+        changes: list[tuple[str, int, int]] = []
+        for line in self.lines:
+            p = int(line.http_port or 0)
+            s = int(line.socks_port or 0)
+            reason = ""
+            if not p or not s:
+                reason = "端口未分配"
+            elif not (PORT_MIN <= p <= PORT_MAX - 1):
+                reason = f"不在随机区间 {PORT_MIN}-{PORT_MAX}"
+            elif _in_ranges(p, _AVOID_RANGES) or _in_ranges(p + 1, _AVOID_RANGES):
+                if _in_ranges(p, ((1024, 15000),)):
+                    reason = "落在系统动态端口段（1024-15000）"
+                elif _in_ranges(p, ((10800, 10999), (7890, 7899), (1080, 1081))):
+                    reason = "落在代理工具祖传段（108xx / 7890）"
+                else:
+                    reason = "落在系统保留 / 需管理员权限的段"
+            elif p in used or s in used:
+                reason = "与本机其它线路重复"
+            elif not (_port_free(p) and _port_free(p + 1)):
+                if self._core_running_on(line, p):
+                    used.update((p, p + 1))
+                    continue
+                reason = "已被其他程序占用"
+            if not reason:
+                used.update((p, s or p + 1))
+                continue
+            try:
+                np, ns = self.alloc_ports(exclude=used)
+            except RuntimeError as e:      # 端口全满，先用着，至少别崩
+                _audit(f"线路 {line.id} 端口体检失败：{e}（继续沿用 {p}）")
+                if p:
+                    used.update((p, p + 1))
+                continue
+            changes.append((line.id, p, np))
+            line.http_port, line.socks_port = np, ns
+            used.update((np, ns))
+            _audit(f"线路 {line.id}（{line.name}）端口 {p or '未分配'} → {np}；原因：{reason}")
+        if changes:
+            for lid, old, new in changes:
+                print(f"[端口] 线路 {lid}：{old or '未分配'} → {new}（随机分配，避免冲突）")
+            if save:
+                self.save()
+        return changes
+
     def alloc_ports(self, base: int | None = None, *, rng: random.Random | None = None,
-                    attempts: int = 240) -> tuple[int, int]:
-        """分一对「http / socks」端口，默认**随机**落在 10000–29998。
+                    attempts: int = 240, exclude: set[int] | None = None) -> tuple[int, int]:
+        """分一对「http / socks」端口，默认**随机**落在 10000–19998。
 
         判据四层，缺一不可：
             1. 没被本机已有线路占用（同一台机器内不打架）；
@@ -162,8 +263,12 @@ class Registry:
             4. 真的 bind 得起来（此刻没别人在听）。
         连续撞墙 attempts 次后，退化成确定性扫描 —— 宁可给个靠前的端口，
         也不能让用户卡在「加不了线路」。
+
+        exclude 用于体检（heal_ports）时把「已经重新分配好的端口」排除掉，
+        否则同一轮里可能把两条线分到同一对端口。
         """
         used = {l.http_port for l in self.lines} | {l.socks_port for l in self.lines}
+        used |= set(exclude or ())
         banned = list(_AVOID_RANGES) + _excluded_ranges()
 
         def ok(port: int) -> bool:

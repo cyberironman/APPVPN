@@ -131,7 +131,12 @@ def test_state_shape(tmp_home, monkeypatch):
     assert st["lines"][0]["users"] == ["a"]
     assert st["lines"][0]["running"] is False
     assert st["profiles"][0]["alive"] is False
-    assert st["profiles"][0]["proxy"] == "127.0.0.1:19999"
+    # 端口是随机分配的（见 registry.alloc_ports），保存时会换号，
+    # 所以从落盘结果里读实际值，不能假定是构造时写的那个。
+    from appproxy.registry import Registry as _Reg
+
+    port = _Reg().load().lines[0].http_port
+    assert st["profiles"][0]["proxy"] == f"127.0.0.1:{port}"
     assert st["kernel_running"] == []
 
 

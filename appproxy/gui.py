@@ -10,8 +10,11 @@
        顺手把那个窗口提到最前；找不到窗口才新开一个。
 
 端口约定
-    优先固定 1443（好记、托盘不用猜），被别的程序占了就退到随机端口，
-    实际端口写进 `gui.port` 文件 —— 托盘读这个文件定位界面。
+    界面服务端口和单实例锁端口都由 `localport` **随机分配**（10000-19998），
+    持久化在 `data/runtime/localports.json`，重启沿用。
+    实际端口另外写一份到 `gui.port` 文件 —— 托盘读这个文件定位界面。
+    以前是固定 1443 / 10897：被别的程序占掉时，用户看到的是
+    「窗口打不开」或「双击没反应」，跟端口冲突完全联系不起来。
 """
 from __future__ import annotations
 
@@ -26,13 +29,16 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from appproxy import pool, selfrun, settings  # noqa: E402
+from appproxy import localport, pool, selfrun, settings  # noqa: E402
 
 TITLE = "分应用代理管家"
 GC_INTERVAL = 5.0           # 秒；回收检查频率
 STARTUP_TIMEOUT = 12.0      # 等本地服务起来的最大秒数
-GUI_LOCK_PORT = 10897       # 单实例锁（和托盘的 10896 分开）
-GUI_PORT = 1443             # 界面服务首选端口（固定，方便托盘定位）
+# 单实例锁与界面服务端口都由 localport 随机分（10000-19998），持久化沿用。
+# 以前是写死的 10897 / 1443：10897 落在代理工具祖传段，1443 挨着 SQL Server 的
+# 1433，被占掉的表现是「窗口打不开」或「双击没反应」，且日志看不出是端口冲突。
+GUI_LOCK_SLOT = "gui_lock"
+GUI_HTTP_SLOT = "gui_http"
 APP_TAG = "appproxy"
 
 # 窗口外壳：优先用 Chromium 系的 --app 模式开独立窗口。
@@ -67,15 +73,11 @@ def log(msg: str) -> None:
 
 
 def _acquire_lock():
-    """占住固定端口当单实例锁。占用失败说明已经开着一个窗口。"""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.bind(("127.0.0.1", GUI_LOCK_PORT))
-        s.listen(1)
-        return s
-    except OSError:
-        s.close()
-        return None
+    """占住随机端口当单实例锁。返回 None = 挑不到端口，调用方按「已有一个在跑」处理。
+
+    端口不再是固定的 10897，由 `localport.bind()` 分配并持久化。
+    """
+    return localport.bind(GUI_LOCK_SLOT)
 
 
 def _shout(msg: str) -> None:
@@ -144,7 +146,8 @@ def _is_ours(port: int) -> bool:
 def running_port() -> int | None:
     """已经开着的界面在哪个端口？没有就返回 None。
 
-    先信 port 文件（可能是随机端口），再探固定端口兜底。
+    先信 port 文件（界面自己写的实际端口），再信 localport 的持久化值，
+    最后才探固定端口 —— 三层都是为了「托盘找得到窗口」。
     """
     ports: list[int] = []
     try:
@@ -153,8 +156,9 @@ def running_port() -> int | None:
             ports.append(int(f.read_text(encoding="utf-8").strip()))
     except (OSError, ValueError):
         pass
-    if GUI_PORT not in ports:
-        ports.append(GUI_PORT)
+    remembered = localport.get(GUI_HTTP_SLOT)
+    if remembered and remembered not in ports:
+        ports.append(remembered)
     for p in ports:
         if _port_open(p, timeout=0.2) and _is_ours(p):
             return p
@@ -451,7 +455,12 @@ def main(argv: list[str] | None = None) -> int:
         log("[!!] 没装 pywebview，改用浏览器打开")
         webview = None
 
-    port = GUI_PORT if not _port_open(GUI_PORT, timeout=0.2) else _free_port()
+    # 界面服务端口：随机取一个持久化的号（不再写死 1443）。
+    # 取不到就退化成「让系统随便给一个」——界面能开比端口固定重要。
+    try:
+        port = localport.alloc(GUI_HTTP_SLOT)
+    except RuntimeError:
+        port = _free_port()
     box = ServerBox()
     box.port = port
 
