@@ -431,6 +431,7 @@ def apps_add(body: NewProfile) -> dict[str, Any]:
 # --------------------------------------------------------------------------- 设置
 @app.get("/api/settings")
 def get_settings() -> dict[str, Any]:
+    from .. import autosub
     reg = _reg()
     sp = sysproxy.read()
     return {
@@ -440,6 +441,10 @@ def get_settings() -> dict[str, Any]:
             "sub_url": (l.sub_url[:40] + "…") if len(l.sub_url) > 40 else l.sub_url,
             "mode": l.mode,
         } for l in reg.lines],
+        # 订阅自动更新：每行的状态文案和「要不要重启内核」都在这里，
+        # 前端只负责摆位置，不自己拼时间差
+        "subs": autosub.status(reg),
+        "subs_global_hours": autosub.global_interval(reg),
         # 「新档案默认走哪条线路」——程序库页的下拉框读写这个值
         "default_line": reg.defaults.get("default_line", ""),
         "sysproxy": {"on": bool(sp.get("enable")), "detail": sysproxy.describe(sp),
@@ -742,6 +747,134 @@ def tun_stop() -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             raise HTTPException(500, str(e)) from e
         return {"ok": True, "message": msg, "state": tunmgr.status()}
+
+
+# --------------------------------------------------------------------------- 订阅自动更新
+class IntervalBody(BaseModel):
+    hours: int = 12                 # 0 = 关闭
+    line_id: str = ""               # 空 = 全局默认
+
+
+@app.get("/api/subs")
+def get_subs() -> dict[str, Any]:
+    """每条线路的订阅状态：上次什么时候更的、失败了没有、要不要重启内核。"""
+    from .. import autosub
+    reg = _reg()
+    return {
+        "global_hours": autosub.global_interval(reg),
+        "lines": autosub.status(reg),
+    }
+
+
+@app.post("/api/subs/interval")
+def post_subs_interval(body: IntervalBody) -> dict[str, Any]:
+    from .. import autosub
+    with ACTION_LOCK:
+        reg = _reg()
+        hours = max(0, int(body.hours))
+        if body.line_id:
+            line = reg.get(body.line_id)
+            if line is None:
+                raise HTTPException(404, "没有这条线路")
+            line.sub_interval_h = hours if hours else 0
+            reg.upsert(line)
+        else:
+            reg.defaults["sub_interval_h"] = hours
+        reg.save()
+    text = "已关闭订阅自动更新" if hours == 0 else f"改为每 {hours} 小时自动更新"
+    return {"ok": True, "message": text,
+            "state": {"global_hours": autosub.global_interval(_reg())}}
+
+
+@app.post("/api/subs/run")
+def post_subs_run() -> dict[str, Any]:
+    """立刻把到期的拉一遍。慢活，丢后台（一次可能十几秒）。"""
+    from .. import autosub
+
+    def work(task: dict[str, Any]) -> str:
+        rows = autosub.run_due(limit=99)
+        if not rows:
+            return "没有到期的线路（都是最新的）"
+        ok = [r for r in rows if r.get("ok")]
+        bad = [r for r in rows if not r.get("ok")]
+        task["detail"] = f"{len(ok)} 条成功"
+        msg = f"更新 {len(ok)} 条" + (f"，{len(bad)} 条失败" if bad else "")
+        if bad:
+            msg += "：" + "；".join(f"{r['line']} {r.get('error')}" for r in bad[:3])
+        return msg
+
+    return _run_bg("更新订阅", work)
+
+
+# --------------------------------------------------------------------------- 诊断包 / 配置搬运
+class ExportBody(BaseModel):
+    with_sub: bool = False
+
+
+@app.post("/api/diag")
+def post_diag() -> dict[str, Any]:
+    """打诊断包。凭据全部打码，生成后自检一遍再交给用户。"""
+    from .. import diag
+    try:
+        path = diag.build()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"{type(e).__name__}: {e}") from e
+    info = diag.verify(path)
+    if not info["clean"]:
+        return {"ok": False, "path": str(path),
+                "message": f"包里还有 {len(info['hits'])} 处疑似凭据，已提示不要外发",
+                "hits": info["hits"][:5], "size": info["size"]}
+    return {"ok": True, "path": str(path), "size": info["size"],
+            "message": f"诊断包已生成（{info['size'] / 1024:.0f} KB），凭据已打码，可直接发给别人"}
+
+
+@app.post("/api/export")
+def post_export(body: ExportBody) -> dict[str, Any]:
+    from .. import transfer
+    with ACTION_LOCK:
+        reg = _reg()
+        store = _store()
+        bundle = transfer.export_bundle(reg, store, include_secrets=body.with_sub)
+        path = transfer.dump(bundle)
+    msg = (f"已导出 {len(bundle['lines'])} 条线路、{len(bundle['profiles'])} 个档案"
+           + ("（含订阅地址，别公开分享）" if body.with_sub else "（不含订阅地址）"))
+    return {"ok": True, "path": str(path), "message": msg}
+
+
+class ImportBody(BaseModel):
+    path: str = ""
+    fetch: bool = False
+
+
+@app.post("/api/import/pick")
+def post_import_pick() -> dict[str, Any]:
+    """弹原生「打开文件」框，只选路径不读内容。"""
+    from .. import folderpick
+    with PICK_LOCK:
+        path = folderpick.pick_file(title="选择导出的配置文件",
+                                    initial=str(settings.home() / "exports"))
+    return {"ok": bool(path), "path": path or "", "cancelled": not path}
+
+
+@app.post("/api/import")
+def post_import(body: ImportBody) -> dict[str, Any]:
+    from .. import transfer
+    if not body.path:
+        raise HTTPException(400, "没给文件路径")
+    try:
+        bundle = transfer.load(Path(body.path))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    def work(task: dict[str, Any]) -> str:
+        with ACTION_LOCK:
+            reg = _reg()
+            store = _store()
+            r = transfer.import_bundle(reg, store, bundle, fetch_sub=body.fetch)
+        task["detail"] = "导入完成"
+        return transfer.summary_text(r)
+
+    return _run_bg("导入配置", work)
 
 
 def create() -> FastAPI:

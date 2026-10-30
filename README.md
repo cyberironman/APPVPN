@@ -73,6 +73,10 @@ Windows per-app proxy manager with independent routing for multiple Chrome insta
 **代理能力**
 - 订阅解析：vless / vmess / trojan / shadowsocks，支持 ws / grpc / h2 / httpupgrade / xhttp、TLS / REALITY
 - 自动择优：`urltest` 定时测速，也可以锁定某一节点
+- **订阅自动更新**：托盘后台按周期（默认 12 小时）拉订阅，**只换节点、不测速、不重启内核**，
+  正在用的连接不会被打断；拉到新节点标「重启内核生效」，下次内核重启或自愈拉起时自动切过去。
+  失败按 5 分 → 15 分 → 45 分 → 2 小时 → 6 小时退避。面板直接显示
+  「上次更新 3 小时前 · 每 12 小时，11 小时后自动更新」或「更新失败（连续 2 次）：HTTP 502」。
 - 首次建配置时先实测节点可用性，只用通的节点（避免开局选到死节点）
 - 批量测速、健康检查、单节点连通性探测
 
@@ -103,15 +107,41 @@ WeChat 式主界面：左侧软件列表、右侧详情，设置也在主界面�
 | 本地端口 | 机器上已经跑着 v2rayN / Clash，只填端口 —— 会先探活，没在监听就直接说「先把你的代理客户端打开」 |
 
 **稳定性**
-- **端口随机分配**：每条线路的本地端口在 `10000–19998` 里随机取一对（http / socks），
+- **端口随机分配**：每条线路的本地端口在 `15002–19998` 里随机取一对（http / socks），
   避开系统保留段（Hyper-V / WSL 排掉的）和各种代理工具的祖传段（1080、7890、10800–10999）。
   以前是所有人从 10840 起递增，撞车就是「内核起不来、那个软件没网」。
   软件自己的单实例锁、控制口、界面服务端口同样随机（也在这段里），
   不再是固定的 10896 / 10897 / 1443 —— 那几个号被别的程序占掉时，
   用户看到的是「双击没反应」和「窗口打不开」，跟端口冲突完全联系不起来。
+
+  **下限 15002 不是随便定的**：本机 Windows 动态端口段被调成了 `1024–15000`
+  （`netsh int ipv4 show dynamicport tcp` 实测：启动 1024、端口数 13977）。
+  出站连接会从这一段里随机取本地端口，listen 端口落进去迟早撞
+  `bind: address already in use`。所以三个管家一律**只在该段之上**取号。
+
+  **本机三个代理项目的端口段（改一处必须同步另两处）**：
+
+  | 程序 | 端口段 |
+  |---|---|
+  | 分应用代理管家 AppProxy（本程序） | 15002 – 19998 |
+  | 分资料代理 Chrome 管家 | 20000 – 39998 |
+  | 分应用代理 Codex 管家 | 40000 – 49148 |
+
+  三段首尾相接、互不重叠，全部落在「动态段之上、49152 之下」的安全区。
+  任意时刻想看实际用的号、有没有撞车，跑
+  `python D:\WorkBuddyData\scripts\proxy_ports_hygiene.py`。
 - **内核掉线自愈**：内核半路挂掉时自动拉回来。判定刻意做慢 —— 先看进程在不在
   （进程在说明只是还在启动），**连续 48 秒**都不在也不通才动手；起不来按
   60 → 120 → 240 → 300 秒退避，不会每分钟硬撞一次拖慢整机。
+
+**排障与搬家**
+- **诊断包**：设置页一个按钮（或 `AppProxy.exe diag`）把 `doctor` 报告、线路/档案快照、
+  端口变更流水、最近日志、编译好的内核配置打成一个 zip。**订阅地址只留主机、
+  uuid / 密码 / reality 密钥全部打码**，生成后还会自检一遍再交给你 —— 可以直接贴到
+  issue，不用自己先做遮挡。
+- **配置导入导出**：`export [--with-sub]` / `import <文件>`。只带线路定义与应用档案，
+  **端口一律不导出**（换台机器重新随机分），节点缓存、内核登记、系统代理备份这些
+  本机痕迹全部丢掉。换电脑不用整目录搬。
 
 **系统级开关**
 - 系统代理接管：改 `HKCU` 注册表 + 广播，**接管前备份、关闭时原样还原**（不需要管理员）
@@ -243,6 +273,9 @@ python scripts\build_release.py --installer  :: 只出安装版
 | `profiles.py` / `launcher.py` | 档案存储、组装启动命令、注入代理参数 |
 | `procwatch.py` | 判断档案对应的程序还开着吗（Chromium 按 `--user-data-dir` 精确匹配） |
 | `pool.py` | 内核按需池：登记、回收（60 秒宽限）、GC |
+| `autosub.py` | 订阅自动更新：到期判断、失败退避、拉到新节点只标记不重启 |
+| `diag.py` | 诊断包：打包 + **凭据打码** + 生成后自检 |
+| `transfer.py` | 配置导入导出：丢端口、丢本机痕迹、孤儿档案改直连 |
 | `icons.py` / `shortcut.py` | 多尺寸 `.ico`、`.lnk`（win32com 优先，pylnk3 兜底） |
 | `sysproxy.py` / `autostart.py` | 系统代理接管与还原、开机自启 |
 | `appscan.py` / `appdb.py` | 扫开始菜单的已安装程序、「明显需要代理」清单匹配 |
@@ -368,6 +401,14 @@ python -m appproxy.cli autostart on|off
 python -m appproxy.cli tun start|stop|status|remove
 python -m appproxy.cli appdb find chrome.exe   :: 这个程序要不要代理
 python -m appproxy.cli cleanup                 :: 预演清空线路数据（发布前用）
+
+:: 订阅自动更新 / 排障 / 搬家
+python -m appproxy.cli auto                    :: 看每条线路的更新状态
+python -m appproxy.cli auto --interval 6       :: 改成每 6 小时（--off 关闭）
+python -m appproxy.cli auto --run              :: 立刻把到期的拉一遍
+python -m appproxy.cli diag                    :: 打诊断包（凭据自动打码）
+python -m appproxy.cli export --out cfg.json   :: 导出配置（不含订阅地址）
+python -m appproxy.cli import cfg.json --fetch :: 导入并顺手拉一次订阅
 ```
 
 ---
@@ -378,7 +419,7 @@ python -m appproxy.cli cleanup                 :: 预演清空线路数据（发
 python -m pytest tests -q
 ```
 
-**103 项单元测试**通过。除单测外，`tests\` 下还有一批**真机端到端脚本**（会真的起内核、开窗口、写注册表，跑之前先看清注释）：
+**202 项单元测试**通过。除单测外，`tests\` 下还有一批**真机端到端脚本**（会真的起内核、开窗口、写注册表，跑之前先看清注释）：
 
 | 脚本 | 验的是什么 |
 |---|---|

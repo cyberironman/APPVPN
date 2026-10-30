@@ -46,7 +46,7 @@ if sys.stderr is None:
 import pystray  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
-from appproxy import (coreproc, gui, launcher, localport, pool,  # noqa: E402
+from appproxy import (autosub, coreproc, gui, launcher, localport, pool,  # noqa: E402
                       procwatch, profiles, settings, shortcut, sysproxy)
 from appproxy.registry import Registry  # noqa: E402
 
@@ -436,6 +436,30 @@ class Tray:
                     pass
 
         threading.Thread(target=ticker, daemon=True).start()
+
+        def sub_keeper() -> None:
+            """订阅自动更新。**独立线程 + 独立节奏**，不跟自愈抢。
+
+            为什么不塞进上面那个 6 秒 ticker：拉订阅是几十秒级的网络阻塞操作，
+            塞进去会连带把「内核自愈」拖慢几十秒。分开线程，两边互不影响。
+            """
+            time.sleep(20)          # 托盘刚起来先让图标/状态就位，别抢带宽
+            while True:
+                try:
+                    for item in autosub.run_due():
+                        if item.get("ok"):
+                            extra = "（内核在跑，重启内核后生效）" \
+                                if item.get("changed") and item.get("running") else ""
+                            log(f"[订阅] {item['line']} 已更新 {item['count']} 个节点{extra}")
+                        else:
+                            log(f"[订阅] {item['line']} 更新失败：{item.get('error')}")
+                except Exception as e:  # noqa: BLE001  订阅站挂了不能拖死托盘
+                    log(f"[订阅] 巡检出错：{e}")
+                time.sleep(300)         # 5 分钟看一次「谁到期了」，实际拉取由间隔决定
+
+        if os.environ.get("APPPROXY_NO_AUTOSUB") != "1":
+            threading.Thread(target=sub_keeper, daemon=True).start()
+
         self.icon.run()
 
 

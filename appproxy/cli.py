@@ -26,6 +26,14 @@
     python -m appproxy.cli sysproxy status | on alpha | off | toggle
     python -m appproxy.cli autostart status | on | off
     python -m appproxy.cli apps scan | list    # 扫本机已安装程序，给建档挑
+
+订阅 / 排障 / 搬家（v0.6.5）：
+
+    python -m appproxy.cli auto                # 每条线路的订阅更新状态
+    python -m appproxy.cli auto --interval 6   # 改周期（--off 关闭，--run 立刻拉）
+    python -m appproxy.cli diag                # 诊断包（凭据自动打码）
+    python -m appproxy.cli export --with-sub   # 导出配置
+    python -m appproxy.cli import cfg.json     # 导入配置（端口重新随机）
 """
 from __future__ import annotations
 
@@ -689,13 +697,130 @@ def cmd_appdb(reg: Registry, a) -> int:
     return 0
 
 
+def cmd_auto(reg: Registry, a) -> int:
+    """订阅自动更新：看状态 / 改间隔 / 立刻拉一遍。
+
+    自动更新本身跑在托盘后台（见 autosub.run_due），这条命令是给人手动检查用的
+    —— 「我的订阅到底还更不更新」这个问题必须能被一句话回答，不能让人去翻日志。
+    """
+    from appproxy import autosub
+
+    changed = False
+    if a.off:
+        reg.defaults["sub_interval_h"] = 0
+        changed = True
+    elif a.on:
+        reg.defaults["sub_interval_h"] = autosub.DEFAULT_INTERVAL_H
+        changed = True
+    elif a.interval is not None:
+        n = int(a.interval)
+        if n <= 0:
+            raise SystemExit("间隔必须大于 0；想彻底关掉请用 auto --off")
+        if a.line:
+            line = reg.require(a.line)
+            line.sub_interval_h = n
+            reg.upsert(line)
+        else:
+            reg.defaults["sub_interval_h"] = n
+        changed = True
+    if changed:
+        reg.save()
+        print(f"{OK} 已更新订阅自动更新设置")
+
+    if a.run:
+        rows = autosub.run_due(reg, limit=99)
+        if not rows:
+            print("没有到期的线路（都是最新的）")
+        for r in rows:
+            if r.get("ok"):
+                msg = f"{OK} {r['line']}：{r['count']} 个节点"
+                if r.get("changed"):
+                    msg += "（节点有变化，内核在跑时重启后生效）" if r.get("running") else "（节点有变化）"
+                print(msg)
+            else:
+                print(f"{FAIL} {r['line']}：{r.get('error')}")
+        reg = _reg()                       # 重新读，下面展示用的是最新状态
+
+    if not reg.lines:
+        print("还没有线路")
+        return 0
+    default = autosub.global_interval(reg)
+    print(f"全局间隔：{default if default else '已关闭'}（小时）")
+    for row in autosub.status(reg):
+        flag = "到期" if row["due"] else "  "
+        print(f"  [{flag}] {row['id']:<12} {row['text']}")
+    if a.stale_only:
+        return 0
+    return 0
+
+
+def cmd_diag(reg: Registry, a) -> int:
+    """打一个诊断包：日志 + 配置 + 体检，用户报障不用打字。"""
+    from appproxy import diag
+
+    out = Path(a.out) if a.out else None
+    path = diag.build(out, reg=reg)
+    info = diag.verify(path)
+    print(f"{OK} 诊断包已生成：{path}")
+    print(f"     大小 {info['size'] / 1024:.1f} KB")
+    if not info["clean"]:
+        print(f"{FAIL} 包里有 {len(info['hits'])} 处疑似未打码的凭据，先别外发：")
+        for h in info["hits"][:10]:
+            print(f"     {h}")
+        return 1
+    print("     已自检：订阅地址、节点 uuid、密码均已打码，可直接贴到 issue")
+    if a.open:
+        try:
+            import os
+            os.startfile(str(path.parent))          # noqa: S606  本机桌面打开目录
+        except OSError:
+            pass
+    return 0
+
+
+def cmd_export(reg: Registry, a) -> int:
+    """把线路 + 档案导出成一份文件（换电脑用）。"""
+    from appproxy import transfer
+    from appproxy.profiles import ProfileStore
+
+    store = ProfileStore().load()
+    bundle = transfer.export_bundle(reg, store, include_secrets=a.with_sub)
+    path = transfer.dump(bundle, Path(a.out) if a.out else None)
+    print(f"{OK} 已导出 {len(bundle['lines'])} 条线路、{len(bundle['profiles'])} 个档案")
+    print(f"     文件：{path}")
+    if a.with_sub:
+        print(f"{FAIL} 这份文件里有**订阅地址**，别公开分享、别提交到仓库")
+    else:
+        print("     未包含订阅地址：换电脑后要在每条线路上重新填一次")
+    return 0
+
+
+def cmd_import(reg: Registry, a) -> int:
+    """把导出的配置文件合并进本机（端口重新随机分配）。"""
+    from appproxy import transfer
+    from appproxy.profiles import ProfileStore
+
+    try:
+        bundle = transfer.load(Path(a.file))
+    except ValueError as e:
+        print(f"{FAIL} {e}")
+        return 1
+    if not bundle.get("contains_secrets"):
+        print("[!] 这份配置不含订阅地址，导入后需要自己补订阅")
+    store = ProfileStore().load()
+    r = transfer.import_bundle(reg, store, bundle, fetch_sub=a.fetch)
+    print(transfer.summary_text(r))
+    print(f"\n{OK} 导入完成。端口是重新随机分配的（每台机器各自一套）")
+    return 0
+
+
 def cmd_doctor(reg: Registry, a) -> int:
     """环境体检 —— 用户报「打不开」时，先让他跑这一条，比问十个问题快。
 
     报告同时写一份到 logs 目录：打包后的 exe 是无控制台窗口的，用户在 cmd 里
     能不能看到输出取决于终端，但**文件一定拿得到**，好让他发给别人看。
     """
-    from appproxy import preflight
+    from appproxy import diag, preflight
 
     if a.fix:
         r = preflight.fix(a.fix)
@@ -704,42 +829,15 @@ def cmd_doctor(reg: Registry, a) -> int:
             print(f"     地址：{r['url']}")
         return 0 if r.get("ok") else 1
 
-    buf: list[str] = []
-
-    def emit(msg: str = "") -> None:
-        print(msg)
-        buf.append(msg)
-
-    issues = preflight.report()
-    major, minor, build = preflight.os_release()
-    emit("分应用代理管家 · 环境体检")
-    emit(f"  系统      Windows {major}.{minor} 内部版本 {build}")
-    emit(f"  软件位置  {settings.exe_dir()}")
-    emit(f"  数据目录  {settings.home()}"
-         f"{'（绿色版，跟着文件夹走）' if settings.is_portable() else ''}")
-    emit(f"  剩余空间  {preflight.free_space_mb()} MB")
-    emit(f"  内核      {settings.find_singbox() or '没找到'}")
-    emit(f"  wintun    {'在' if preflight.has_wintun() else '缺（只影响 TUN）'}")
-    emit(f"  VC++ 库   {'已装' if preflight.vc_runtime_installed() else '未装（建议装）'}")
-    emit("")
-    blocks = [i for i in issues if i["level"] == "block"]
-    if not issues:
-        emit(f"{OK} 一切正常，没有需要处理的项目")
-    else:
-        for i in issues:
-            mark = FAIL if i["level"] == "block" else "[!] "
-            emit(f"{mark} {i['title']}")
-            emit(f"     {i['detail']}")
-            if i.get("fix"):
-                emit(f"     修法：doctor --fix {i['fix']}")
-        emit("")
-        emit(f"{FAIL} 有 {len(blocks)} 项会阻止程序运行" if blocks
-             else f"{OK} 都能跑，只是有几项建议处理")
-
+    # 报告正文统一由 diag.doctor_text() 生成：诊断包里放的是同一份文本，
+    # 两处各写一套的话，早晚会出现「doctor 说没问题、包里说有问题」。
+    text = diag.doctor_text()
+    print(text, end="")
+    blocks = [i for i in preflight.report() if i["level"] == "block"]
     try:
         settings.logs_dir().mkdir(parents=True, exist_ok=True)
         out = settings.logs_dir() / "doctor.txt"
-        out.write_text("\n".join(buf) + "\n", encoding="utf-8")
+        out.write_text(text, encoding="utf-8")
         print(f"\n     报告已存：{out}")
     except OSError:
         pass
@@ -1022,6 +1120,33 @@ def main(argv: list[str] | None = None) -> int:
     pdoc = sub.add_parser("doctor", help="环境体检：系统版本 / 运行库 / 内核 / 目录权限")
     pdoc.add_argument("--fix", help="直接修某项，例如 --fix vc_runtime 或 wintun")
     pdoc.set_defaults(fn=cmd_doctor)
+
+    # ------------------------------------------------------------ 订阅自动更新
+    pau = sub.add_parser("auto", help="订阅自动更新：看状态 / 改间隔 / 立刻拉一遍")
+    pau.add_argument("--interval", type=int, help="每隔几小时更新一次（默认 12）")
+    pau.add_argument("--line", help="只改某条线路的间隔（不给就是全局默认）")
+    pau.add_argument("--off", action="store_true", help="全部关掉自动更新")
+    pau.add_argument("--on", action="store_true", help="恢复默认（每 12 小时）")
+    pau.add_argument("--run", action="store_true", help="立刻把所有到期的拉一遍")
+    pau.add_argument("--stale-only", action="store_true", help=argparse.SUPPRESS)
+    pau.set_defaults(fn=cmd_auto)
+
+    # ------------------------------------------------------------ 诊断包 / 配置搬运
+    pdg = sub.add_parser("diag", help="打一个诊断包（日志+配置+体检，凭据自动打码）")
+    pdg.add_argument("--out", help="输出 zip 路径（默认放 logs 目录）")
+    pdg.add_argument("--open", action="store_true", help="生成后打开所在目录")
+    pdg.set_defaults(fn=cmd_diag)
+
+    pex = sub.add_parser("export", help="导出配置（线路 + 应用档案），换电脑用")
+    pex.add_argument("--out", help="输出文件（默认放 数据目录/exports/）")
+    pex.add_argument("--with-sub", action="store_true",
+                     help="连同订阅地址一起导出（含凭据，别公开分享）")
+    pex.set_defaults(fn=cmd_export)
+
+    pim = sub.add_parser("import", help="导入配置文件（端口重新随机分配）")
+    pim.add_argument("file", help="export 出来的 json")
+    pim.add_argument("--fetch", action="store_true", help="顺便把订阅拉一次（导入即可用）")
+    pim.set_defaults(fn=cmd_import)
 
     # 内部用：提权子进程的落点。源码模式走 `-m appproxy.elevate`，
     # 打包成 exe 后没有解释器了，只能转成 `AppProxy.exe elevate ...`。

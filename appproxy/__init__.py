@@ -41,10 +41,15 @@
     接线   setup.from_subscription / uri / local -> 用户自己的代理接进来（三种方式同一条路）
     清理   cli cleanup --yes                    -> 上线前删私人代理（先备份，再清空）
 
+步骤 4.6（上线必备的三件小事，v0.6.5）：
+    自动   autosub.run_due()                   -> 订阅到期就拉，不测速、不重启内核
+    诊断   diag.build()                        -> 日志+配置+体检一个 zip，凭据自动打码
+    搬家   transfer.export_bundle/import_bundle -> 线路+档案一份文件，端口重新随机
+
 上层只调用这些，不直接碰内核。
 """
 
-__version__ = "0.6.4"
+__version__ = "0.6.5"
 
 from .models import Line, Node  # noqa: F401
 from .profiles import AppProfile, LaunchPlan, ProfileStore  # noqa: F401

@@ -94,6 +94,19 @@ def ensure_core(reg: Registry, line: Line, *, wait: float = 12.0,
         raise RuntimeError(f"找不到 {line.engine} 内核，线路 {line.id} 无法启动")
 
     cfg = line.config_path()
+    # 订阅在后台更新过、而这份配置还是按旧节点编译的 —— 先重写再用。
+    # 不在这里处理的话，「自动更新」就等于只更新了缓存，永远不生效。
+    if cfg.exists() and getattr(line, "sub_stale", False):
+        nodes, _ = reg.load_nodes(line)
+        if nodes:
+            data = (singconf.build(line, nodes) if line.engine.lower().startswith("sing")
+                    else xrayconf.build(line, nodes))
+            xrayconf.write(data, cfg)
+            line.sub_stale = False
+            try:
+                reg.save()
+            except OSError:
+                pass
     if not cfg.exists():
         nodes, _ = reg.load_nodes(line)
         if not nodes and allow_fetch and line.sub_url:

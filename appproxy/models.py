@@ -219,12 +219,27 @@ class Line:
     health_url: str = ""
     engine: str = "singbox"     # singbox（支持分应用） / xray（兼容老线路）
 
+    # ---- 订阅自动更新的本地状态（v0.6.5）----
+    # 这一段是「运行痕迹」不是用户配置：换电脑导出配置时整段丢掉重建。
+    sub_interval_h: int = -1    # 小时；-1 = 跟随全局默认，0 = 这条线不自动更新
+    sub_checked_at: int = 0     # 上次尝试拉取的时间（成功失败都记）
+    sub_ok_at: int = 0          # 上次成功拉取的时间
+    sub_fail: int = 0           # 连续失败次数（用于退避）
+    sub_error: str = ""         # 最后一次失败原因（面板直接展示给用户）
+    sub_stale: bool = False     # 节点已更新、但正在跑的内核还在用旧配置
+
     def __post_init__(self) -> None:
         self.mode = (self.mode or "auto").lower()
         if self.mode not in ("auto", "single"):
             raise ValueError(f"mode 只能是 auto / single：{self.mode}")
         self.http_port = int(self.http_port or 0)
         self.socks_port = int(self.socks_port or 0)
+        self.sub_interval_h = int(-1 if self.sub_interval_h is None else self.sub_interval_h)
+        self.sub_checked_at = int(self.sub_checked_at or 0)
+        self.sub_ok_at = int(self.sub_ok_at or 0)
+        self.sub_fail = int(self.sub_fail or 0)
+        self.sub_error = str(self.sub_error or "")
+        self.sub_stale = bool(self.sub_stale)
 
     def config_path(self):
         from . import settings

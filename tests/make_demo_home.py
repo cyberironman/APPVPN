@@ -60,16 +60,26 @@ def main() -> int:
 
     reg = Registry()
     reg.lines = [
-        Line(id="airport", name="示例机场", http_port=10801, socks_port=10802,
+        Line(id="airport", name="示例机场",
              sub_url="https://sub.example.com/api/v1/client/subscribe?token=DEMO",
              mode="auto", engine="singbox"),
-        Line(id="backup", name="备用线路", http_port=10803, socks_port=10804,
+        Line(id="backup", name="备用线路",
              sub_url="https://mirror.example.net/api/v1/client/subscribe?token=DEMO",
              mode="auto", engine="singbox"),
     ]
+    # 端口走真实的随机分配（截图里必须是随机号，不能又是 10801 那种祖传端口，
+    # 否则文档和程序实际行为对不上）
+    for line in reg.lines:
+        line.http_port, line.socks_port = reg.alloc_ports()
     reg.save()
     reg.save_nodes(reg.lines[0], _nodes(18, "edge"), {"profile-title": "示例机场"})
     reg.save_nodes(reg.lines[1], _nodes(6, "mirror"), {"profile-title": "备用线路"})
+    # 订阅状态也造一份：截图里那一行「上次更新 x 小时前 · 每 12 小时…」
+    # 是自动更新功能唯一的可见证据，空着等于没做
+    now_ts = int(time.time())
+    for line, hours in zip(reg.lines, (2, 5)):
+        line.sub_ok_at = line.sub_checked_at = now_ts - hours * 3600
+    reg.save()
 
     chrome = gui.find_browser()
     chrome_exe = str(chrome) if chrome else r"C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -94,15 +104,16 @@ def main() -> int:
     # 写几行演示日志：截图里「最近日志」那块空着不太好看，
     # 也顺便让读者一眼看懂「点启动」背后发生了什么。
     now = time.time()
+    p1, p2 = reg.lines[0].http_port, reg.lines[1].http_port
     demo_log = [
-        ("内核已启动  pid=18420  端口=10801  日志=%s\\logs\\sing-box-airport.log" % home,
-         "内核已启动（端口 10801）"),
+        ("内核已启动  pid=18420  端口=%d  日志=%s\\logs\\sing-box-airport.log" % (p1, home),
+         "内核已启动（端口 %d）" % p1),
         ("启动  chrome-airport：\"%s\" --user-data-dir=%s\\apps\\chrome-airport\\data "
-         "--no-first-run --proxy-server=http://127.0.0.1:10801" % (chrome_exe, home),
+         "--no-first-run --proxy-server=http://127.0.0.1:%d" % (chrome_exe, home, p1),
          "启动 chrome-airport"),
-        ("chrome-airport 已在运行（端口 10801）", None),
-        ("内核已启动  pid=19004  端口=10803", "内核已启动（端口 10803）"),
-        ("启动  chrome-backup：\"%s\" --proxy-server=http://127.0.0.1:10803" % chrome_exe,
+        ("chrome-airport 已在运行（端口 %d）" % p1, None),
+        ("内核已启动  pid=19004  端口=%d" % p2, "内核已启动（端口 %d）" % p2),
+        ("启动  chrome-backup：\"%s\" --proxy-server=http://127.0.0.1:%d" % (chrome_exe, p2),
          "启动 chrome-backup"),
     ]
     log_path = settings.logs_dir() / "launcher.log"

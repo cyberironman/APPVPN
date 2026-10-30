@@ -97,3 +97,76 @@ def pick_folder(title: str = "选择文件夹", initial: str | None = None) -> s
         if root:
             ole32.CoTaskMemFree(root)
         ole32.CoUninitialize()
+
+
+# --------------------------------------------------------------------------- 选文件
+OFN_READONLY = 0x00000001
+OFN_OVERWRITEPROMPT = 0x00000002
+OFN_NOCHANGEDIR = 0x00000008
+OFN_PATHMUSTEXIST = 0x00000800
+OFN_FILEMUSTEXIST = 0x00001000
+OFN_EXPLORER = 0x00080000
+
+
+class _OpenFileNameW(ctypes.Structure):
+    _fields_ = [
+        ("lStructSize", wintypes.DWORD),
+        ("hwndOwner", wintypes.HWND),
+        ("hInstance", wintypes.HINSTANCE),
+        ("lpstrFilter", wintypes.LPCWSTR),
+        ("lpstrCustomFilter", wintypes.LPWSTR),
+        ("nMaxCustFilter", wintypes.DWORD),
+        ("nFilterIndex", wintypes.DWORD),
+        ("lpstrFile", wintypes.LPWSTR),
+        ("nMaxFile", wintypes.DWORD),
+        ("lpstrFileTitle", wintypes.LPWSTR),
+        ("nMaxFileTitle", wintypes.DWORD),
+        ("lpstrInitialDir", wintypes.LPCWSTR),
+        ("lpstrTitle", wintypes.LPCWSTR),
+        ("Flags", wintypes.DWORD),
+        ("nFileOffset", wintypes.WORD),
+        ("nFileExtension", wintypes.WORD),
+        ("lpstrDefExt", wintypes.LPCWSTR),
+        ("lCustData", wintypes.LPARAM),
+        ("lpfnHook", ctypes.c_void_p),
+        ("lpTemplateName", wintypes.LPCWSTR),
+        ("pvReserved", ctypes.c_void_p),
+        ("dwReserved", wintypes.DWORD),
+        ("FlagsEx", wintypes.DWORD),
+    ]
+
+
+def pick_file(title: str = "选择文件", initial: str | None = None,
+              pattern: str = "*.json", label: str = "配置文件") -> str | None:
+    """弹「打开文件」对话框，返回绝对路径；取消返回 None。
+
+    为什么要它：导入配置需要用户给出一个 json 的**绝对路径**，而网页拿不到
+    真实路径（浏览器只给 File 对象）。走 shell32/comdlg32 原生对话框最简单，
+    也省掉一个 python-multipart 依赖。
+    """
+    if os.name != "nt":
+        return None
+    comdlg32 = ctypes.windll.comdlg32          # type: ignore[attr-defined]
+    ole32 = ctypes.windll.ole32                # type: ignore[attr-defined]
+    ole32.CoInitialize(None)
+    try:
+        buf = ctypes.create_unicode_buffer(32768)
+        ofn = _OpenFileNameW()
+        ofn.lStructSize = ctypes.sizeof(_OpenFileNameW)
+        ofn.hwndOwner = None
+        # 过滤器是「说明\0通配\0说明\0通配\0\0」的双 null 结尾字符串
+        ofn.lpstrFilter = f"{label}\0{pattern}\0所有文件\0*.*\0\0"
+        ofn.nFilterIndex = 1
+        ofn.lpstrFile = ctypes.cast(buf, wintypes.LPWSTR)
+        ofn.nMaxFile = 32768
+        ofn.lpstrInitialDir = str(initial) if initial else None
+        ofn.lpstrTitle = title
+        ofn.Flags = (OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST
+                     | OFN_NOCHANGEDIR | OFN_EXPLORER)
+        comdlg32.GetOpenFileNameW.argtypes = [ctypes.POINTER(_OpenFileNameW)]
+        comdlg32.GetOpenFileNameW.restype = wintypes.BOOL
+        if not comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+            return None
+        return buf.value or None
+    finally:
+        ole32.CoUninitialize()

@@ -674,6 +674,8 @@ function viewSettings() {
   const tn = st.tun || {};
   const lines = st.lines || [];
   const dl = st.default_line || "";
+  const gh = (st.subs_global_hours === undefined || st.subs_global_hours === null)
+    ? 12 : st.subs_global_hours;
   return `
   <div class="page-head">
     <h1>设置</h1>
@@ -704,8 +706,57 @@ function viewSettings() {
           <span>被 ${(live.users || []).length} 个软件使用</span>
         </div>
         <div class="line-meta"><span style="overflow:hidden;text-overflow:ellipsis">订阅 ${esc(l.sub_url || "（无）")}</span></div>
+        ${(() => {
+          const sub = (st.subs || []).find(x => x.id === l.id);
+          if (!sub) return "";
+          const bad = sub.fails > 0;
+          const tone = bad ? "warn" : (sub.enabled ? "on" : "off");
+          return `<div class="line-meta" style="align-items:center">
+            <span class="badge ${tone}"><i></i>${bad ? "更新失败" : (sub.enabled ? "自动更新" : "已关闭")}</span>
+            <span style="color:${bad ? "#a97a05" : "var(--muted)"}">${esc(sub.text)}</span>
+            ${sub.stale ? `<span class="badge warn"><i></i>有新节点 · 重启内核生效</span>` : ""}
+          </div>`;
+        })()}
       </div>`;
     }).join("") : `<div class="line-card" style="color:var(--muted)">还没有线路。用命令行 <code>add</code> 添加一条订阅。</div>`}
+
+    <div class="sec-title">订阅自动更新（节点过期不用再自己点）</div>
+    <div class="rows">
+      <div class="row"><label>频率</label><div class="val"
+        style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="sub-iv" style="max-width:180px">
+          ${[0, 3, 6, 12, 24, 48].map(h => `<option value="${h}" ${
+            h === gh ? "selected" : ""}>${h ? "每 " + h + " 小时" : "关闭（全靠手动）"}</option>`).join("")}
+        </select>
+        <button class="btn btn-ghost btn-sm" id="sub-run">立即更新到期的</button>
+      </div></div>
+      <div class="row" style="color:var(--muted);font-size:11.5px;display:block;line-height:1.8">
+        托盘在后台按这个频率拉订阅。<b>只换节点，不测速、不重启内核</b> ——
+        正在用的连接不会被打断。拉到新节点时，界面上会标「有新节点 · 重启内核生效」，
+        下次内核重启（或自愈拉起）时自动切过去。失败按 5 分钟 → 15 分 → 45 分 →
+        2 小时 → 6 小时 退避，不会拿你的 IP 反复砸订阅站。
+      </div>
+    </div>
+
+    <div class="sec-title">排障与搬家</div>
+    <div class="rows">
+      <div class="row"><label>诊断包</label><div class="val"
+        style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" id="btn-diag">导出诊断包</button>
+        <span style="font-size:11.5px;color:var(--muted)">
+          日志 + 配置 + 环境体检打成一个 zip；订阅地址、uuid、密码自动打码，可直接发人</span>
+      </div></div>
+      <div class="row"><label>配置</label><div class="val"
+        style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" id="btn-export">导出配置</button>
+        <button class="btn btn-ghost btn-sm" id="btn-export-sub">导出（含订阅地址）</button>
+        <button class="btn btn-ghost btn-sm" id="btn-import">导入配置…</button>
+      </div></div>
+      <div class="row" style="color:var(--muted);font-size:11.5px;display:block;line-height:1.8">
+        换电脑时用它，不用整目录搬。导入的端口会<b>重新随机分配</b>（每台机器各自一套），
+        「含订阅地址」那档等于把订阅明文导出，别发给别人、别提交到仓库。
+      </div>
+    </div>
 
     <div class="sec-title">系统代理</div>
     <div class="rows">
@@ -817,6 +868,62 @@ function bindSettings() {
       await loadSettings();
     };
   });
+  const subIv = $("#sub-iv");
+  if (subIv) subIv.onchange = async () => {
+    const h = parseInt(subIv.value, 10) || 0;
+    try {
+      const r = await api("/api/subs/interval", {method: "POST",
+        body: JSON.stringify({hours: h})});
+      toast(r.message);
+    } catch (e) { toast(e.message, 5000); }
+    await loadSettings();
+  };
+  const subRun = $("#sub-run");
+  if (subRun) subRun.onclick = async () => {
+    subRun.disabled = true; subRun.textContent = "更新中…";
+    try {
+      await api("/api/subs/run", {method: "POST"});
+      toast("已开始更新到期的订阅，进度见下方任务");
+    } catch (e) { toast(e.message, 5000); }
+    subRun.disabled = false; subRun.textContent = "立即更新到期的";
+    await refresh(true); await loadSettings();
+  };
+  const diagBtn = $("#btn-diag");
+  if (diagBtn) diagBtn.onclick = async () => {
+    diagBtn.disabled = true; diagBtn.textContent = "打包中…";
+    try {
+      const r = await api("/api/diag", {method: "POST"});
+      toast(r.message + " · " + r.path, 13000);
+    } catch (e) { toast(e.message, 8000); }
+    diagBtn.disabled = false; diagBtn.textContent = "导出诊断包";
+  };
+  const bindExport = (sel, withSub) => {
+    const b = $(sel); if (!b) return;
+    b.onclick = async () => {
+      try {
+        const r = await api("/api/export", {method: "POST",
+          body: JSON.stringify({with_sub: withSub})});
+        toast(r.message + " · " + r.path, 13000);
+      } catch (e) { toast(e.message, 8000); }
+    };
+  };
+  bindExport("#btn-export", false);
+  bindExport("#btn-export-sub", true);
+  const impBtn = $("#btn-import");
+  if (impBtn) impBtn.onclick = async () => {
+    impBtn.disabled = true; impBtn.textContent = "选择文件…";
+    try {
+      const p = await api("/api/import/pick", {method: "POST"});
+      if (p && p.path) {
+        impBtn.textContent = "导入中…";
+        await api("/api/import", {method: "POST", body: JSON.stringify({path: p.path})});
+        toast("已开始导入，完成情况见下方任务列表");
+        await refresh(true);
+      }
+    } catch (e) { toast(e.message, 9000); }
+    impBtn.disabled = false; impBtn.textContent = "导入配置…";
+    await loadSettings();
+  };
   const on = $("#sp-on"), off = $("#sp-off");
   if (on) on.onclick = async () => {
     const lid = $("#sp-line")?.value || "";
