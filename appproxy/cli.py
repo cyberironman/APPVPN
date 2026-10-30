@@ -848,6 +848,13 @@ def cmd_preset(reg: Registry, a) -> int:
             print(f"{OK} 补回 {x['name']}（{how}）")
         return 0
 
+    # 界面启动时已经自动预置过了；命令行直接跑（尤其是刚装完还没开过界面）
+    # 这里也补一次，免得用户看到「缺 7 个」以为自己坏了。
+    try:
+        preset.ensure(store)
+    except Exception as e:  # noqa: BLE001  预置失败不该挡住查看
+        print(f"{FAIL} 预置失败：{type(e).__name__}: {e}")
+
     st = preset.info(store)
     print(f"常用软件 {st['in_list']}/{st['total']} 个在左侧列表里（预置版本 {st['applied']}）")
     # 按左侧列表的实际顺序打印（预置在前、按清单序号），不是存储顺序
