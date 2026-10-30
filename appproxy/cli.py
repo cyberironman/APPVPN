@@ -46,7 +46,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from appproxy import coreproc, latency, settings, singconf, subscription, xrayconf  # noqa: E402
-from appproxy import appscan, autostart, icons, profiles, sysproxy  # noqa: E402
+from appproxy import appdb, appfind, appscan, autostart, icons, profiles, sysproxy  # noqa: E402
 from appproxy import shortcut as shortcutmod  # noqa: E402
 from appproxy.models import Line  # noqa: E402
 from appproxy.registry import PORT_MIN, Registry  # noqa: E402
@@ -420,6 +420,13 @@ def cmd_profile_add(reg: Registry, a) -> int:
     else:
         line_id = _check_line(reg, a.line).id
 
+    if getattr(a, "app", ""):
+        return _add_from_catalog(store, a, line_id)
+
+    if not a.exe:
+        print(f"{FAIL} 要给 --exe <路径>，或者用 --app <软件名>（先 `profile suggest` 看有哪些）")
+        return 1
+
     exe = Path(a.exe)
     if not exe.is_file():
         print(f"{FAIL} 程序不存在：{exe}")
@@ -431,14 +438,119 @@ def cmd_profile_add(reg: Registry, a) -> int:
 
     prof = profiles.AppProfile(id=pid, name=a.name or exe.stem, exe=str(exe),
                                line_id=line_id, kind=a.kind, url=a.url or "",
-                               data_dir=a.data_dir or "", args=a.arg or [])
+                               data_dir=a.data_dir or "", args=a.arg or [],
+                               isolate=a.isolate)
     store.upsert(prof)
     made = _publish(store, prof, a)
     store.save()
     print(f"{OK} 已建档案 {prof.id}（{prof.name}，{prof.resolved_kind}，"
           f"线路 {line_id or '直连'}）")
+    print(f"     数据隔离 {prof.isolate}：{profiles.isolation(prof.exe, prof.resolved_kind)['note']}")
     for m in made:
         print(f"     {m}")
+    return 0
+
+
+def _add_from_catalog(store: profiles.ProfileStore, a, line_id: str) -> int:
+    """按「常用软件清单」建档 —— 两种形态都不带软件本体。
+
+    装了桌面版 -> 指向那个 exe；否则 -> 一个专属浏览器档案直达网页版。
+    """
+    item = appdb.get(a.app)
+    if item is None:
+        print(f"{FAIL} 清单里没有 {a.app}，`profile suggest` 看全部条目")
+        return 1
+
+    name = item.get("name") or item.get("key") or a.app
+    key = item.get("key") or profiles.slug(name)
+    web = item.get("web") or ""
+    table = appfind.load()
+
+    exe = None if getattr(a, "web", False) else appfind.locate_any(item.get("exe") or [], table)
+    if exe:
+        pid = a.id or store.unique_id(Path(exe).stem)
+        prof = profiles.AppProfile(id=pid, name=a.name or name, exe=exe,
+                                   line_id=line_id, kind=a.kind,
+                                   url=a.url or web, data_dir=a.data_dir or "",
+                                   args=a.arg or [],
+                               isolate=a.isolate)
+        store.upsert(prof)
+        made = _publish(store, prof, a)
+        store.save()
+        print(f"{OK} 已建档案 {prof.id}（{prof.name} 桌面版，线路 {line_id or '直连'}）")
+        print(f"     程序：{exe}")
+        for m in made:
+            print(f"     {m}")
+        return 0
+
+    if web and (getattr(a, "web", False) or not item.get("exe")):
+        br = appfind.browser(table)
+        if br:
+            pid = a.id or store.unique_id(key)
+            prof = profiles.AppProfile(id=pid, name=a.name or name, exe=br,
+                                       line_id=line_id, kind="chromium",
+                                       url=a.url or web, data_dir=a.data_dir or "",
+                                       args=a.arg or [],
+                               isolate=a.isolate)
+            store.upsert(prof)
+            made = _publish(store, prof, a)
+            store.save()
+            print(f"{OK} 已建档案 {prof.id}（{prof.name} 网页版快捷方式，"
+                  f"线路 {line_id or '直连'}）")
+            print(f"     点开直接用 {Path(br).name} 打开 {web}")
+            for m in made:
+                print(f"     {m}")
+            return 0
+
+    store_hit = appfind.store_only(item.get("exe") or [], table)
+    if store_hit:
+        print(f"[!] {name} 本机装的是微软商店版，它不接受代理参数，带不动。")
+        print(f"     {store_hit}")
+    else:
+        print(f"{FAIL} 本机没找到 {name}。")
+    if item.get("download"):
+        print(f"     官网下载：{item['download']}")
+    if web:
+        print(f"     不想装也行：profile add --app {key} "
+              f"{'--direct' if not line_id else '--line ' + line_id} --web")
+    print("     装好之后再跑一次这条命令即可。")
+    return 1
+
+
+def cmd_profile_suggest(reg: Registry, a) -> int:
+    """列出「常用软件」清单，标出本机装了哪些、哪些已经建过档案。"""
+    store = _pstore()
+    table = appfind.load()
+    have = {p.exe.lower() for p in store.profiles}
+    haurl = {p.url.rstrip("/").lower() for p in store.profiles if p.url}
+    rows = appdb.suggest(have, table, haurl)
+    st = appdb.suggest_stats(rows)
+
+    print(f"常用软件清单 v{appdb.load().get('version', '?')}　共 {st['total']} 条")
+    print(f"  本机已装 {st['found']} 个　可直接添加 {st['ready']} 个"
+          f"　其中网页版快捷方式 {st['installed_web']} 个")
+    print(f"  浏览器：{appfind.browser(table) or '没找到（网页版快捷方式建不了）'}")
+    print("")
+
+    cur = ""
+    for r in rows:
+        if r["group"] != cur:
+            cur = r["group"]
+            print(f"[{cur}]")
+        if r["have"]:
+            mark, tail = "已建", r["exe"] or r["web"]
+        elif r["found"]:
+            mark, tail = "已装", r["exe"]
+        elif r["kind"] == "web":
+            mark, tail = "网页", r["web"]
+        elif r["badge"] == "商店版":
+            mark, tail = "商店", "只能装官网桌面版"
+        else:
+            mark, tail = "未装", r["download"] or ""
+        print(f"  ({mark}) {r['name']:<22} {tail}")
+    print("")
+    print("加一个：profile add --app telegram --line <线路>")
+    print("加网页版：profile add --app facebook --line <线路> --web")
     return 0
 
 
@@ -464,10 +576,14 @@ def cmd_profile_set(reg: Registry, a) -> int:
         prof.data_dir = a.data_dir
     if a.arg:
         prof.args = a.arg
+    if a.isolate:
+        prof.isolate = a.isolate
     store.upsert(prof)
     made = _publish(store, prof, a)
     store.save()
+    iso = profiles.isolation(prof.exe, prof.resolved_kind)
     print(f"{OK} 已更新档案 {prof.id}（线路 {prof.line_id or '直连'}）")
+    print(f"     数据隔离 {prof.isolate}：{iso['note']}")
     for m in made:
         print(f"     {m}")
     return 0
@@ -1031,16 +1147,27 @@ def main(argv: list[str] | None = None) -> int:
     pap = psub.add_parser("add", help="新建应用档案（并生成图标与快捷方式）")
     pap.add_argument("--id", default="")
     pap.add_argument("--name", default="")
-    pap.add_argument("--exe", required=True)
+    pap.add_argument("--exe", default="", help="程序路径；也可以改用 --app 从常用清单里挑")
+    pap.add_argument("--app", default="",
+                     help="常用软件清单里的标识，如 telegram / chrome / facebook")
+    pap.add_argument("--web", action="store_true",
+                     help="即使本机装了桌面版，也建「网页版快捷方式」")
     pap.add_argument("--line", default="", help="绑定的线路 id")
     pap.add_argument("--direct", action="store_true", help="不挂代理（直连档案）")
     pap.add_argument("--kind", choices=("auto", "chromium", "generic"), default="auto")
     pap.add_argument("--url", default="", help="启动后打开的地址")
     pap.add_argument("--arg", action="append", help="额外启动参数，可重复")
     pap.add_argument("--data-dir", default="", help="自定义数据目录")
+    pap.add_argument("--isolate", choices=profiles.ISOLATE_MODES, default="auto",
+                     help="多开隔离：auto 按程序能力自动 / full 强行隔离 / off 关闭"
+                          "（同一软件建多个档案时，隔离才能真多开）")
     pap.add_argument("--no-icon", action="store_true")
     pap.add_argument("--no-shortcut", action="store_true")
     pap.set_defaults(fn=cmd_profile_add)
+
+    psub.add_parser("suggest",
+                    help="列出常用软件清单（本机装没装 / 建没建过档案）"
+                    ).set_defaults(fn=cmd_profile_suggest)
 
     pps = psub.add_parser("set", help="修改档案（改完自动重做图标与快捷方式）")
     pps.add_argument("id")
@@ -1052,6 +1179,8 @@ def main(argv: list[str] | None = None) -> int:
     pps.add_argument("--url")
     pps.add_argument("--arg", action="append")
     pps.add_argument("--data-dir")
+    pps.add_argument("--isolate", choices=profiles.ISOLATE_MODES,
+                     help="多开隔离：auto / full / off")
     pps.add_argument("--no-icon", action="store_true")
     pps.add_argument("--no-shortcut", action="store_true")
     pps.set_defaults(fn=cmd_profile_set)

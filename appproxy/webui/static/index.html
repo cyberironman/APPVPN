@@ -244,7 +244,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
 
 let S = {
   data: null, view: "profile", sel: null, q: "",
-  apps: null, settings: null, busy: {}, iconTick: {}, lastIds: ""
+  apps: null, appsTab: "suggest", settings: null, busy: {}, iconTick: {}, lastIds: ""
 };
 
 /* ---------------- 通信 ---------------- */
@@ -377,6 +377,16 @@ function renderMain() {
           </select>
         </div></div>
         <div class="row"><label>程序</label><div class="val"><code>${esc(p.exe)}</code></div></div>
+        <div class="row"><label>数据隔离</label><div class="val">
+          <select id="sel-iso">
+            <option value="auto" ${p.isolate !== "full" && p.isolate !== "off" ? "selected" : ""}>自动（推荐）</option>
+            <option value="full" ${p.isolate === "full" ? "selected" : ""}>强制隔离</option>
+            <option value="off" ${p.isolate === "off" ? "selected" : ""}>关闭</option>
+          </select>
+          <div style="font-size:11.5px;color:${p.iso_mode === "none" ? "var(--warn)" : "var(--muted)"};margin-top:5px;line-height:1.7">
+            ${p.iso_mode === "none" ? "⚠ " : ""}${esc(p.iso_note || "")}
+          </div>
+        </div></div>
         <div class="row"><label>数据目录</label><div class="val"><code>${esc(p.data_dir)}</code></div></div>
         <div class="row"><label>图标</label><div class="val">
           <button class="btn btn-ghost btn-sm" id="act-icon">重做图标与快捷方式</button>
@@ -424,6 +434,17 @@ function bindDetail(p) {
   if (stop) stop.onclick = () => actStop(p.id);
   const sl = $("#sel-line");
   if (sl) sl.onchange = () => actLine(p.id, sl.value);
+  const si = $("#sel-iso");
+  if (si) si.onchange = async () => {
+    si.disabled = true;
+    try {
+      const r = await api(`/api/profile/${encodeURIComponent(p.id)}/isolate`,
+        {method: "POST", body: JSON.stringify({mode: si.value})});
+      toast(r.message, 5000);
+      await refresh(true);
+    } catch (e) { toast(e.message, 5000); }
+    finally { si.disabled = false; }
+  };
   const ic = $("#act-icon");
   if (ic) ic.onclick = () => actIcon(p.id);
   const del = $("#act-del");
@@ -510,45 +531,120 @@ async function loadLog() {
   } catch (e) {}
 }
 
-/* ---------------- 程序库视图 ---------------- */
-function viewApps() {
-  if (!S.apps) return `<div class="blank"><div class="spin" style="border-color:#ddd;border-top-color:#2b6de5;width:20px;height:20px"></div><p>正在读取程序列表…</p></div>`;
-  const have = new Set(S.apps.have || []);
+/* ---------------- 添加软件视图 ---------------- */
+function appsToolbar() {
   const lines = S.data.lines || [];
-  const groups = {};
-  (S.apps.items || []).forEach(it => (groups[it.group] = groups[it.group] || []).push(it));
-  const order = ["浏览器","通讯","开发","办公","影音","工具","游戏","其他"];
-  const keys = Object.keys(groups).sort((a,b) => {
-    const ia = order.indexOf(a), ib = order.indexOf(b);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, "zh");
-  });
+  const n = (S.apps.suggest || []).filter(r => r.kind === "exe" && !r.have).length;
   return `
   <div class="page-head">
-    <h1>从已安装程序添加</h1>
+    <h1>添加软件</h1>
+    ${n ? `<button class="btn btn-primary btn-sm" id="do-batch">一键添加本机已装的 ${n} 个</button>` : ""}
     <button class="btn btn-ghost btn-sm" id="do-scan">重新扫描</button>
     <button class="btn btn-ghost btn-sm" id="back">返回</button>
   </div>
   <div class="scroll" style="padding:14px 26px 0">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-      <span style="font-size:12px;color:var(--muted)">新档案默认走</span>
-      <select id="new-line">
-        <option value="">直连</option>
-        ${lines.map(l => `<option value="${esc(l.id)}" ${l.id === (S.settings?.default_line || "") ? "selected" : ""}>${esc(l.name)}</option>`).join("")}
-      </select>
-      <span style="font-size:11.5px;color:var(--muted)">加到哪个线路之后可以在详情里随时改</span>
-    </div>
-    ${keys.map(g => `
-      <div class="grp">${esc(g)} · ${groups[g].length}</div>
-      ${groups[g].slice(0, 60).map(it => `
-        <div class="approw">
-          <div class="nm">${esc(it.name)}${it.needed ? ' <span class="badge warn" title="' + esc(it.why || "") + '">需代理</span>' : ""}<small>${esc(it.exe)}</small></div>
-          ${have.has(it.exe.toLowerCase())
-            ? '<span class="badge off">已添加</span>'
-            : `<button class="btn btn-ghost btn-sm" data-add="${esc(it.exe)}" data-name="${esc(it.name)}">添加</button>`}
-        </div>`).join("")}
-    `).join("")}
+  <div class="tabs" style="margin-top:0">
+    <div class="tab ${(S.appsTab || "suggest") === "suggest" ? "on" : ""}" data-atab="suggest">常用软件</div>
+    <div class="tab ${S.appsTab === "all" ? "on" : ""}" data-atab="all">本机全部程序</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+    <span style="font-size:12px;color:var(--muted)">新档案默认走</span>
+    <select id="new-line">
+      <option value="">直连</option>
+      ${lines.map(l => `<option value="${esc(l.id)}" ${l.id === (S.settings?.default_line || "") ? "selected" : ""}>${esc(l.name)}</option>`).join("")}
+    </select>
+    <span style="font-size:11.5px;color:var(--muted)">加完可以随时改</span>
   </div>`;
 }
+
+function appsSuggestBody() {
+  const rows = S.apps.suggest || [];
+  const st = S.apps.stats || {};
+  if (!rows.length) {
+    return `<p style="color:var(--muted);font-size:12.5px">清单还没加载好，点右上角「重新扫描」。</p>`;
+  }
+
+  const rowHtml = r => {
+    const lvl = r.level === "must"
+      ? '<span class="badge warn" title="' + esc(r.why) + '">需代理</span>'
+      : '<span class="badge off" title="' + esc(r.why) + '">常需要</span>';
+    let sub;
+    if (r.found) sub = r.exe;
+    else if (r.kind === "web") sub = r.web;
+    else if (r.badge === "商店版") sub = "装的是微软商店版，不接受代理参数";
+    else sub = "本机未安装";
+    let right = "";
+    if (r.have) right = '<span class="badge off">已添加</span>';
+    else if (r.kind === "exe")
+      right = `<button class="btn btn-ghost btn-sm" data-add-key="${esc(r.key)}">添加</button>`;
+    else if (r.kind === "web")
+      right = `<button class="btn btn-ghost btn-sm" data-add-web="${esc(r.key)}">加网页快捷方式</button>`;
+    else {
+      right = `<button class="btn btn-ghost btn-sm" data-dl="${esc(r.download)}">去官网安装</button>`;
+      if (r.can_web)
+        right += `<button class="btn btn-ghost btn-sm" data-add-web="${esc(r.key)}" title="不装也能用，直接开网页">网页版</button>`;
+    }
+    return `<div class="approw">
+      <div class="nm">${esc(r.name)} ${lvl}<small>${esc(sub)}</small></div>
+      ${right}
+    </div>`;
+  };
+
+  const installed = rows.filter(r => r.found);
+  const groups = {};
+  rows.filter(r => !r.found).forEach(r => (groups[r.group] = groups[r.group] || []).push(r));
+  const order = Object.keys(S.apps.appdb?.groups || {});
+  const keys = Object.keys(groups).sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, "zh");
+  });
+
+  const warn = S.apps.browser ? "" :
+    '<br><span style="color:var(--red)">没找到任何浏览器，网页版快捷方式暂时加不了。</span>';
+  const note = `<div style="font-size:11.5px;color:var(--muted);line-height:1.9;margin:0 0 10px">
+    本机已装 <b>${st.found || 0}</b> 个 · 点一下就能加 <b>${st.ready || 0}</b> 个 · 需先安装 <b>${st.need_install || 0}</b> 个。
+    没装的点「去官网安装」，装完回来再点一次。只有网页版的会给你一个<b>专用浏览器图标</b>，
+    点开直达该网站，不影响你平时用的那个浏览器。${warn}
+  </div>`;
+
+  const block = (title, list, accent) => `
+    <div class="grp"${accent ? ' style="color:var(--green)"' : ''}>${esc(title)} · ${list.length}</div>
+    ${list.map(rowHtml).join("")}`;
+
+  return note
+    + (installed.length ? block("本机已装 · 点一下就加", installed, true) : "")
+    + keys.map(g => block(g, groups[g], false)).join("");
+}
+
+function appsAllBody() {
+  const have = new Set(S.apps.have || []);
+  const groups = {};
+  (S.apps.items || []).forEach(it => (groups[it.group] = groups[it.group] || []).push(it));
+  const order = ["浏览器", "通讯", "开发", "办公", "影音", "工具", "游戏", "其他"];
+  const keys = Object.keys(groups).sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, "zh");
+  });
+  if (!keys.length) return `<p style="color:var(--muted);font-size:12.5px">还没扫描过，点右上角「重新扫描」。</p>`;
+  return keys.map(g => `
+    <div class="grp">${esc(g)} · ${groups[g].length}</div>
+    ${groups[g].slice(0, 60).map(it => `
+      <div class="approw">
+        <div class="nm">${esc(it.name)}${it.needed ? ' <span class="badge warn" title="' + esc(it.why || "") + '">需代理</span>' : ""}<small>${esc(it.exe)}</small></div>
+        ${have.has(it.exe.toLowerCase())
+          ? '<span class="badge off">已添加</span>'
+          : `<button class="btn btn-ghost btn-sm" data-add="${esc(it.exe)}" data-name="${esc(it.name)}">添加</button>`}
+      </div>`).join("")}
+  `).join("");
+}
+
+function viewApps() {
+  if (!S.apps) return `<div class="blank"><div class="spin" style="border-color:#ddd;border-top-color:#2b6de5;width:20px;height:20px"></div><p>正在读取程序列表…</p></div>`;
+  const tab = S.appsTab || "suggest";
+  const body = tab === "all" ? appsAllBody() : appsSuggestBody();
+  return appsToolbar() + body + `</div>`;
+}
+
 function bindApps() {
   const back = $("#back"); if (back) back.onclick = () => go("profile");
   const nl = $("#new-line");
@@ -561,14 +657,71 @@ function bindApps() {
     await loadSettings();
   };
   const sc = $("#do-scan");
-  if (sc) sc.onclick = async () => { S.apps = null; renderMain(); await api("/api/apps/scan", {method:"POST"}); setTimeout(loadApps, 1500); };
+  if (sc) sc.onclick = async () => { S.apps = null; renderMain(); await api("/api/apps/scan", {method:"POST"}); setTimeout(loadApps, 2200); };
+  document.querySelectorAll("[data-atab]").forEach(el => {
+    el.onclick = () => { S.appsTab = el.dataset.atab; renderMain(); };
+  });
+
+  const line = () => $("#new-line")?.value || "";
+
+  /* 一键把本机已装的常用软件全加上 */
+  const batch = $("#do-batch");
+  if (batch) batch.onclick = async () => {
+    const keys = (S.apps.suggest || []).filter(r => r.kind === "exe" && !r.have).map(r => r.key);
+    if (!keys.length) return;
+    batch.disabled = true; batch.innerHTML = '<span class="spin"></span>添加中…';
+    try {
+      const r = await api("/api/apps/add-batch", {method:"POST",
+        body: JSON.stringify({keys, line_id: line()})});
+      toast(r.message, 4000);
+      if (r.failed && r.failed.length) {
+        console.warn("批量添加未成功的：", r.failed);
+      }
+      await refresh(true);
+      await loadApps();
+    } catch (e) {
+      toast("添加失败：" + e.message, 5000);
+      batch.disabled = false; batch.textContent = "一键添加";
+    }
+  };
+
+  const addByKey = async (btn, key, web) => {
+    btn.disabled = true; btn.textContent = "添加中…";
+    try {
+      const r = await api("/api/apps/add", {method:"POST",
+        body: JSON.stringify({key, line_id: line(), web: !!web})});
+      S.iconTick[r.id] = Date.now();
+      toast(r.message);
+      await refresh(true);
+      await loadApps();
+    } catch (e) {
+      toast(e.message, 6000);
+      btn.disabled = false;
+      btn.textContent = web ? "加网页快捷方式" : "添加";
+    }
+  };
+  document.querySelectorAll("[data-add-key]").forEach(b => {
+    b.onclick = () => addByKey(b, b.dataset.addKey, false);
+  });
+  document.querySelectorAll("[data-add-web]").forEach(b => {
+    b.onclick = () => addByKey(b, b.dataset.addWeb, true);
+  });
+  document.querySelectorAll("[data-dl]").forEach(b => {
+    b.onclick = async () => {
+      const url = b.dataset.dl;
+      if (!url) { toast("这个没有官方下载页，自行搜索安装即可", 4000); return; }
+      try {
+        const r = await api("/api/open-url", {method:"POST", body: JSON.stringify({url})});
+        toast(r.message);
+      } catch (e) { toast(e.message, 5000); }
+    };
+  });
   document.querySelectorAll("[data-add]").forEach(b => {
     b.onclick = async () => {
-      const line = $("#new-line")?.value || "";
       b.disabled = true; b.textContent = "添加中…";
       try {
         const r = await api("/api/apps/add", {method:"POST", body: JSON.stringify({
-          exe: b.dataset.add, name: b.dataset.name, line_id: line })});
+          exe: b.dataset.add, name: b.dataset.name, line_id: line() })});
         S.iconTick[r.id] = Date.now();
         toast(r.message);
         await refresh(true);

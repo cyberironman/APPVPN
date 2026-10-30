@@ -106,6 +106,108 @@ def needed(exe: str) -> bool:
     return find(exe) is not None
 
 
+def get(key: str) -> dict[str, Any] | None:
+    """按稳定标识（key）取条目；老清单没有 key 时按名字兜底。"""
+    k = (key or "").strip().lower()
+    if not k:
+        return None
+    for item in entries():
+        if (item.get("key") or "").lower() == k:
+            return item
+    for item in entries():
+        if (item.get("name") or "").lower() == k:
+            return item
+    return None
+
+
+def group_order() -> list[str]:
+    """清单自己声明的分组顺序（JSON 里 dict 保序）。"""
+    return list((load().get("groups") or {}).keys())
+
+
+def suggest(have_exes: set[str] | None = None,
+            table: dict[str, list[str]] | None = None,
+            have_urls: set[str] | None = None) -> list[dict[str, Any]]:
+    """「常用软件」这一屏的数据：清单全量 + 本机找没找到 + 建过档案没有。
+
+    这是「傻瓜选择」的核心 —— 用户不需要翻开始菜单，也不需要知道自己装的
+    是绿色版还是 Store 版。本机找到就一键建档；没找到就给官网下载地址。
+
+    have_urls 是「已经建过的网页版档案」的站点地址（去掉 www 与末尾斜杠），
+    否则 Facebook 这种条目每次进来都显示成「还没加」。
+    """
+    from . import appfind
+
+    have = {e.lower() for e in (have_exes or set())}
+    haurl = {u.rstrip("/").lower() for u in (have_urls or set())}
+    t = table if table is not None else appfind.load()
+    br = appfind.browser(t)
+    out: list[dict[str, Any]] = []
+
+    for item in entries():
+        exes = list(item.get("exe") or [])
+        exe = appfind.locate_any(exes, t) if exes else None
+        store = "" if exe else (appfind.store_only(exes, t) if exes else "") or ""
+        web = item.get("web") or ""
+        br_exe = br or ""
+        can_web = bool(web and br_exe)
+
+        # 三种形态，决定了界面上那个按钮是什么：
+        #   exe —— 本机有桌面版，点一下就建快捷方式
+        #   web —— 本来就是网页服务（Facebook / YouTube），建专属浏览器图标
+        #   ""  —— 有桌面版但本机没装，按钮是「去官网安装」（装完回来再点）
+        if exe:
+            kind = "exe"
+        elif not exes and can_web:
+            kind = "web"
+        else:
+            kind = ""
+
+        have_it = (exe.lower() in have) if exe else (web.rstrip("/").lower() in haurl)
+        badge = "" if (exe or can_web) else ("商店版" if store else "未安装")
+        out.append({
+            "key": item.get("key") or "",
+            "name": item.get("name") or "",
+            "group": item.get("group") or "",
+            "level": item.get("level") or "often",
+            "why": item.get("why") or "",
+            "download": item.get("download") or "",
+            "web": web,
+            "exe": exe or "",
+            "found": bool(exe),
+            "store": store,
+            "kind": kind,
+            "can_web": can_web,
+            "browser": br_exe,
+            "have": bool(have_it),
+            "badge": badge,
+        })
+
+    order = group_order()
+    level_rank = {"must": 0, "often": 1}
+
+    def sort_key(it: dict[str, Any]) -> tuple:
+        # 先归组（界面按组渲染，打散会出现好几个同名标题），
+        # 组内把本机装了的顶上去 —— 第一眼就看到自己能加什么。
+        gi = order.index(it["group"]) if it["group"] in order else len(order)
+        return (gi, not it["found"], level_rank.get(it["level"], 2), it["name"].lower())
+
+    out.sort(key=sort_key)
+    return out
+
+
+def suggest_stats(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "total": len(rows),
+        "found": sum(1 for r in rows if r["found"]),
+        # 「点一下就能加」= 桌面版已装 或 纯网页服务（有浏览器）
+        "ready": sum(1 for r in rows if r["kind"] and not r["have"]),
+        "installed_web": sum(1 for r in rows if r["kind"] == "web"),
+        # 没装、但有官网下载 —— 这些是「去装」而不是「能加」
+        "need_install": sum(1 for r in rows if not r["kind"] and not r["have"]),
+    }
+
+
 def mark(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """给 appscan 的扫描结果打标：needed / group / why。
 

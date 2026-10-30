@@ -103,7 +103,8 @@ def main() -> int:
                 # 设置页比主界面长一倍多（线路 / 系统代理 / TUN / 数据目录 /
                 # 运行环境 / 任务），窗口开高一点才截得全
                 for tag, out_name, size in (("", "主界面.png", "1000,720"),
-                                            ("settings", "设置页.png", "1000,1900")):
+                                            ("settings", "设置页.png", "1000,1900"),
+                                            ("apps", "添加软件.png", "1000,1800")):
                     out = settings.code_root() / "docs" / out_name
                     url = f"http://127.0.0.1:{port}/" + (f"#{tag}" if tag else "")
                     cmd = [

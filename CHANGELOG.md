@@ -4,6 +4,81 @@
 
 ---
 
+## v0.6.6 — 常用软件清单 30 → 73 条；同软件多开·全面隔离
+
+### 一、常用软件：从「自己翻开始菜单」变成「点一下」
+
+以前「添加软件」只列**开始菜单里扫到的**程序。三种情况会漏：绿色版没有快捷方式、
+微软商店版在 `WindowsApps`（那目录不允许枚举）、刚装完还没刷新缓存。
+而用户装好这个软件的第一件事永远是「我该把哪个挂上去」—— 翻半天翻不到，就放弃了。
+
+现在第一屏是「常用软件」，内置 **73 条**，按「社交与通讯 / 视频与音乐 /
+浏览器与 Google / AI 与开发 / 知识与协作 / 游戏平台」分组，每条标「需代理 / 常需要」，
+并把**本机已装的顶到最前面**，顶部还有一个「一键添加本机已装的 N 个」。
+
+覆盖的都是国内真会用的：Telegram、WhatsApp、Messenger、Discord、Slack、Signal、LINE、
+Viber、Zoom、Teams、Facebook、Instagram、X、Reddit、LinkedIn、TikTok、YouTube、Netflix、
+Twitch、Prime Video、Disney+、Spotify、SoundCloud、Chrome、Edge、Firefox、Brave、
+Google 云端硬盘、ChatGPT、Claude、Gemini、Grok、Cursor、Windsurf、VS Code、Git、
+Ollama、LM Studio、Hugging Face、Notion、Figma、Dropbox、Obsidian、维基百科、
+Steam、Epic、Battle.net、Riot、EA app、Ubisoft Connect、Minecraft ……
+
+**这个功能不带任何软件本体，只给两样东西**（这也是它风险最低的原因）：
+
+| 本机情况 | 点一下得到什么 |
+|---|---|
+| 装了桌面版 | 一个指向那个 exe 的快捷方式（带代理参数启动） |
+| 没装、但是网页服务（Facebook / YouTube） | 一个**专属浏览器图标**，点开直达该网站，与你平时用的浏览器完全隔离 |
+| 没装、有桌面版 | 按钮变成「去官网安装」，跳到官网下载页；旁边仍留一个「网页版」兜底 |
+| 只装了商店版 | 明确告诉你「商店版不接受代理参数，装官网版」，而不是给一个起不来的路径 |
+
+### 二、找得到程序：`appfind.py`
+
+「一键添加」的前提是知道程序装在哪。三条来源按可靠性排：
+注册表 `App Paths\<exe>` → 开始菜单缓存 → 常见安装根浅扫（深度 4 层，跳过
+`node_modules` / `cache` / `installer` 之类）。结果缓存到 `data\exe_index.json`，
+7 天过期，本机 1190 个 exe 约 2 秒。
+
+**商店版（`WindowsApps` 下）一律视为不可用**：那目录受 ACL 保护，直接
+`CreateProcess` 会 Access Denied，而 shell 激活又塞不进 `--proxy-server`。
+
+### 三、同软件多开·全面隔离
+
+同一软件开两个实例，默认会共用 `%APPDATA%` 那一套配置：轻则点第二个图标只是把
+第一个窗口顶到前面（根本没多开），重则两边互相覆盖登录态和草稿。
+解法只有一个 —— 把「用户数据」挪进档案自己的目录，也就是 Chrome 快捷方式那套
+`--user-data-dir`，但**按程序各自支持的写法**来：
+
+| 程序 | 用的参数 |
+|---|---|
+| Chromium / Electron 系（Chrome、Edge、Discord、Slack、Notion、Figma、VS Code…） | `--user-data-dir=<档案目录>` |
+| Telegram Desktop | `-workdir <档案目录>` |
+| Firefox / Thunderbird | `-profile <档案目录> -no-remote`（少了 `-no-remote` 第二个实例只会唤起第一个） |
+
+表里没有的程序**不硬塞参数** —— 塞个它不认的，运气好被忽略，运气差直接起不来。
+这种情况界面直说「这个程序没法真多开，多个档案会共用配置」，并给一个可选的
+「强制隔离」（重定向 `APPDATA` / `LOCALAPPDATA`，尽力而为、不保证生效）。
+档案详情页可以随时切 自动 / 强制 / 关闭。
+
+代价说清楚：磁盘上每个档案多一份完整用户数据（Chrome 一个档案几百 MB 起）。
+换来的是真的互不干扰：可同时登录两个账号、一个崩了另一个不受影响、
+删掉某个档案不会碰其他档案。
+
+### 四、顺手修掉的几处
+
+* **判重条件太宽**：网页版档案的 exe 也是 `chrome.exe`，原先按 exe 判重会让
+  「加 Chrome」被误判成「已经加过」。改成：带目标网址的按网址比，不带的按 exe 比；
+  换一条线路永远允许（同软件走两条线本来就是核心用法）。
+* **有桌面版的软件未装时不再自动降级成网页版** —— 那会让人以为装好了，其实只是开了个网页。
+* **图标大字改成软件名首字**：以前英文名取 exe 首字母，Facebook / Telegram / X 三个
+  网页版档案全是 `C`，桌面上分不清。
+* `profile add --exe` 不再是必填，可以改用 `--app`。
+
+新增测试 43 项（清单完整性、商店版排除、三种隔离形态、判重、批量添加、外链白名单），
+总计 **206 → 249 项**。
+
+---
+
 ## v0.6.5 — 端口段下限抬到 15002 + 订阅自动更新 / 诊断包 / 配置搬运
 
 **为什么改**：`netsh int ipv4 show dynamicport tcp` 实测本机动态端口段是

@@ -52,13 +52,21 @@ def _font(size: int):
 
 
 def _glyph(profile) -> str:
-    """取 1~2 个字符做标识：中文名取首字，英文名取 exe 首字母。"""
+    """取 1 个字符做标识：优先用显示名的首字，没有名字才退回 exe。
+
+    为什么不按 exe 取：网页版快捷方式（Facebook / Telegram / X）的 exe
+    都是 chrome.exe，按 exe 取会让它们全变成同一个字母，桌面上分不清。
+    """
     name = (profile.name or "").strip()
-    if name and not name.isascii():
-        return name[0]
-    stem = Path(profile.exe).stem or name or "?"
-    letters = [c for c in stem if c.isalnum()]
-    return (letters[0] if letters else "?").upper()
+    if name:
+        for ch in name:
+            if ch.isalnum():
+                return ch.upper() if ch.isascii() else ch
+    stem = Path(profile.exe).stem
+    for ch in stem:
+        if ch.isalnum():
+            return ch.upper() if ch.isascii() else ch
+    return "?"
 
 
 def _center_text(draw, box, text: str, size: int, fill) -> None:

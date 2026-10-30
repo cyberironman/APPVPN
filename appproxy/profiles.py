@@ -40,6 +40,68 @@ CHROMIUM_BASE_ARGS = ("--no-first-run", "--no-default-browser-check")
 ENV_PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                   "http_proxy", "https_proxy", "all_proxy")
 
+# --------------------------------------------------------------------------- 多开隔离
+# 同一个软件开两个实例，默认会共用 %APPDATA% 里那一套配置：轻则点第二个图标
+# 只是把第一个的窗口顶到前面（根本没多开），重则两边互相覆盖登录态、聊天记录、
+# 草稿箱。唯一的正解是让程序把「自己的用户数据」放进档案自己的目录 ——
+# 也就是 Chrome 快捷方式那一套 `--user-data-dir`，只不过要按程序各自支持的写法来。
+#
+# 代价说清楚：磁盘上每个档案多一份完整用户数据（Chrome 一个档案几百 MB 起）。
+# 换来的是**真的互不干扰**：可以同时登录两个账号、一个崩了另一个不受影响、
+# 删掉某个档案不会碰其他档案的数据。这是用户明确要的取舍。
+#
+# 表里没有的程序，就是它不接受外部指定数据目录。**不硬来** —— 塞个它不认的
+# 参数，运气好被忽略，运气差直接起不来。这种情况老老实实告诉用户
+# 「这个软件没法真多开，两个档案会共用配置」。
+DATA_DIR_ARGS: dict[str, tuple[str, ...]] = {
+    # Telegram Desktop 自己的写法
+    "telegram.exe": ("-workdir", "{dir}"),
+    # Electron 应用继承 Chromium 的开关，通用
+    "whatsapp.exe": ("--user-data-dir={dir}",),
+    "discord.exe": ("--user-data-dir={dir}",),
+    "slack.exe": ("--user-data-dir={dir}",),
+    "notion.exe": ("--user-data-dir={dir}",),
+    "figma.exe": ("--user-data-dir={dir}",),
+    "obsidian.exe": ("--user-data-dir={dir}",),
+    "lm studio.exe": ("--user-data-dir={dir}",),
+    "chatgpt.exe": ("--user-data-dir={dir}",),
+    "claude.exe": ("--user-data-dir={dir}",),
+    "code.exe": ("--user-data-dir", "{dir}"),
+    "cursor.exe": ("--user-data-dir={dir}",),
+    "windsurf.exe": ("--user-data-dir={dir}",),
+    "postman.exe": ("--user-data-dir={dir}",),
+    "spotify.exe": ("--user-data-dir={dir}",),
+    # Firefox / Thunderbird 要配 -no-remote，否则第二个实例只会唤起第一个
+    "firefox.exe": ("-profile", "{dir}", "-no-remote"),
+    "thunderbird.exe": ("-profile", "{dir}", "-no-remote"),
+}
+
+ISOLATE_MODES = ("auto", "full", "off")
+
+
+def isolation(exe: str | Path, kind: str = "auto") -> dict[str, Any]:
+    """这个程序怎么隔离用户数据？返回 {mode, tpl, note, can}。
+
+    mode:
+        user-data-dir  Chromium / Electron 系，最干净
+        native         程序自己的参数（-workdir / -profile …）
+        env            没法带参数，只能试着重定向 APPDATA（不保证有效）
+        none           什么都不做
+    """
+    name = Path(str(exe)).name.lower()
+    k = detect_kind(exe) if kind in ("", "auto") else kind
+
+    if k == "chromium":
+        return {"mode": "user-data-dir", "can": True,
+                "tpl": ("--user-data-dir={dir}",),
+                "note": "Chromium 系，每个档案一份独立用户数据，可同时登录多个账号"}
+    tpl = DATA_DIR_ARGS.get(name)
+    if tpl:
+        return {"mode": "native", "can": True, "tpl": tpl,
+                "note": f"{Path(str(exe)).stem} 自带指定数据目录的启动参数，可以真多开"}
+    return {"mode": "none", "can": False, "tpl": (),
+            "note": "这个程序不接受外部指定数据目录，多个档案会共用它自己的配置"} 
+
 
 def detect_kind(exe: str | Path) -> str:
     """按 exe 文件名猜类型：chromium（浏览器，支持参数级代理）或 generic。"""
@@ -66,6 +128,7 @@ class AppProfile:
     icon: str = ""               # 生成的 .ico
     shortcut: str = ""           # 最近一次生成的 .lnk
     created: int = 0
+    isolate: str = "auto"        # auto / full / off —— 多开时怎么隔离用户数据
 
     def __post_init__(self) -> None:
         self.id = slug(self.id)
@@ -73,6 +136,9 @@ class AppProfile:
         self.kind = (self.kind or "auto").lower()
         if self.kind not in ("auto", "chromium", "generic"):
             raise ValueError(f"kind 只能是 auto / chromium / generic：{self.kind}")
+        self.isolate = (self.isolate or "auto").lower()
+        if self.isolate not in ISOLATE_MODES:
+            self.isolate = "auto"
         if not self.created:
             self.created = int(time.time())
         if isinstance(self.args, str):  # 从命令行/JSON 传进来的字符串
@@ -121,6 +187,8 @@ class LaunchPlan:
     cwd: str
     proxy: str = ""              # 展示用，如 http://127.0.0.1:10801
     kind: str = "chromium"
+    iso_mode: str = "none"       # user-data-dir / native / env / none
+    iso_note: str = ""           # 人话说明，直接显示在界面上
 
     def command_line(self) -> str:
         return " ".join(f'"{a}"' if " " in a else a for a in self.argv)
@@ -131,6 +199,9 @@ def plan(profile: AppProfile, line: Line | None = None) -> LaunchPlan:
 
     line 为 None 或线路没有端口 -> 直连档案（浏览器显式 --no-proxy-server，
     免得上一次留下的系统代理又把它带走）。
+
+    数据隔离在这里落地：把程序自己的用户数据指到 `apps/<id>/data`，
+    这样同一个软件的两个档案才真的是两个独立实例。
     """
     exe = str(profile.exe_path())
     port = int(line.http_port or 0) if line else 0
@@ -139,29 +210,46 @@ def plan(profile: AppProfile, line: Line | None = None) -> LaunchPlan:
     env: dict[str, str] = {}
     argv = [exe]
 
+    iso = isolation(profile.exe, kind)
+    data = profile.data_path()
+    iso_mode, iso_note = "none", iso["note"]
+
+    if profile.isolate == "off":
+        iso_mode = "none"
+        iso_note = "已关闭数据隔离：多个档案会共用这个软件自己的配置"
+    elif iso["can"]:
+        iso_mode = iso["mode"]
+        for tpl in iso["tpl"]:
+            argv.append(tpl.replace("{dir}", str(data)))
+    elif profile.isolate == "full":
+        # 程序不认数据目录参数时，最后的手段是把两个已知文件夹掰到档案目录。
+        # 只对这个进程有效（CreateProcess 带自己的环境块）；但如果程序用
+        # SHGetFolderPath 读注册表，它照样看系统那份 —— 所以只能算尽力而为，
+        # 界面上也要如实说，不能让人以为已经隔离干净了。
+        iso_mode = "env"
+        iso_note = ("这个程序不接受数据目录参数，已尝试重定向 APPDATA / "
+                    "LOCALAPPDATA（不保证生效）")
+        env["APPDATA"] = str(data / "Roaming")
+        env["LOCALAPPDATA"] = str(data / "Local")
+        env["USERPROFILE"] = str(data / "Profile")
+
     if kind == "chromium":
-        argv.append(f"--user-data-dir={profile.data_path()}")
         argv.extend(CHROMIUM_BASE_ARGS)
         if port:
             argv.append(f"--proxy-server={proxy}")
         else:
             argv.append("--no-proxy-server")
-        argv.extend(profile.args)
-        if profile.url:
-            argv.append(profile.url)
     else:
-        argv.extend(profile.args)
-        if profile.url:
-            argv.append(profile.url)
-        if port:
-            for key in ENV_PROXY_KEYS:
-                env[key] = proxy
-        else:
-            for key in ENV_PROXY_KEYS:
-                env[key] = ""
+        for key in ENV_PROXY_KEYS:
+            env[key] = proxy
+
+    argv.extend(profile.args)
+    if profile.url:
+        argv.append(profile.url)
 
     return LaunchPlan(argv=argv, env=env, cwd=str(profile.exe_path().parent),
-                      proxy=proxy, kind=kind)
+                      proxy=proxy, kind=kind,
+                      iso_mode=iso_mode, iso_note=iso_note)
 
 
 # --------------------------------------------------------------------------- 存储

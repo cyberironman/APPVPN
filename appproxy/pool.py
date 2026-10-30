@@ -24,7 +24,7 @@ from typing import Any
 
 from . import coreproc, procwatch, settings, singconf, subscription, xrayconf
 from .models import Line
-from .profiles import AppProfile, ProfileStore
+from .profiles import AppProfile, ProfileStore, isolation
 from .registry import Registry
 
 
@@ -346,6 +346,17 @@ def state(reg: Registry | None = None, store: ProfileStore | None = None) -> dic
     profiles = []
     for p in store.profiles:
         line = reg.get(p.line_id) if p.line_id else None
+        iso = isolation(p.exe, p.resolved_kind)
+        # 实际生效的隔离方式要把「用户关掉了」「程序不支持」都算进去，
+        # 界面照着这个说人话，别拿程序理论上支持什么当结论
+        if p.isolate == "off":
+            iso_eff, iso_note = "none", "已关闭数据隔离（多个档案会共用这个软件的配置）"
+        elif iso["can"]:
+            iso_eff, iso_note = iso["mode"], iso["note"]
+        elif p.isolate == "full":
+            iso_eff, iso_note = "env", "已尝试重定向 APPDATA（不保证生效）"
+        else:
+            iso_eff, iso_note = "none", iso["note"]
         profiles.append({
             "id": p.id,
             "name": p.name,
@@ -358,6 +369,10 @@ def state(reg: Registry | None = None, store: ProfileStore | None = None) -> dic
             "icon": p.icon_path().exists(),
             "url": p.url,
             "data_dir": str(p.data_path()),
+            "isolate": p.isolate,
+            "iso_mode": iso_eff,
+            "iso_note": iso_note,
+            "iso_can": bool(iso["can"]),
         })
 
     return {

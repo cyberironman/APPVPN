@@ -79,6 +79,7 @@ def launch(profile: profiles.AppProfile, reg: Registry, *, dry_run: bool = False
 
     p = profiles.plan(profile, line)
     log(f"启动 {profile.id}：{p.command_line()}")
+    log(f"    数据隔离 {p.iso_mode} —— {p.iso_note}")
     if dry_run:
         for k, v in p.env.items():
             log(f"    env {k}={v or '<清空>'}")
@@ -87,8 +88,15 @@ def launch(profile: profiles.AppProfile, reg: Registry, *, dry_run: bool = False
     if not profile.exists():
         raise RuntimeError(f"找不到程序：{profile.exe}")
 
-    if p.kind == "chromium":
+    # 隔离目录必须先建好：程序第一次启动时如果发现目录不存在，
+    # 有的会自己建，有的直接报错退出，别赌。
+    if p.iso_mode in ("user-data-dir", "native"):
         profile.data_path().mkdir(parents=True, exist_ok=True)
+    elif p.iso_mode == "env":
+        base = profile.data_path()
+        for sub in ("Roaming", "Local", "Profile"):
+            (base / sub).mkdir(parents=True, exist_ok=True)
+
     env = dict(os.environ)
     env.update(p.env)
     subprocess.Popen(p.argv, cwd=p.cwd or None, env=env,

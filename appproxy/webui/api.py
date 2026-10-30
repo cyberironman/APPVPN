@@ -27,9 +27,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
-from .. import (appdb, appscan, autostart, coreproc, gui_support, icons, latency,
-                launcher, pool, preflight, procwatch, profiles, settings, setup,
-                shortcut, subscription, sysproxy, tunmgr, xrayconf)
+from .. import (appdb, appfind, appscan, autostart, coreproc, gui_support, icons,
+                latency, launcher, pool, preflight, procwatch, profiles, settings,
+                setup, shortcut, subscription, sysproxy, tunmgr, xrayconf)
 from ..profiles import AppProfile
 from ..registry import Registry
 
@@ -205,11 +205,22 @@ class LineRef(BaseModel):
     line_id: str = ""
 
 
+class IsolateBody(BaseModel):
+    mode: str = "auto"          # auto / full / off
+
+
 class NewProfile(BaseModel):
-    exe: str
+    exe: str = ""
     name: str = ""
     line_id: str = ""
     url: str = ""
+    key: str = ""            # 常用软件清单里的条目 id（带 key 就不用给 exe）
+    web: bool = False        # 强制建「网页版快捷方式」而不是桌面版
+
+
+class BatchAdd(BaseModel):
+    keys: list[str] = []
+    line_id: str = ""
 
 
 @app.post("/api/profile/{pid}/start")
@@ -267,6 +278,31 @@ def profile_set_line(pid: str, body: LineRef) -> dict[str, Any]:
                     "message": f"已改为 {body.line_id or '直连'}；图标/快捷方式没做成：{e}"}
         return {"ok": True, "made": made,
                 "message": f"已改为 {body.line_id or '直连'}"}
+
+
+@app.post("/api/profile/{pid}/isolate")
+def profile_set_isolate(pid: str, body: IsolateBody) -> dict[str, Any]:
+    """改多开隔离档位。不用重做图标（角标只跟线路走）。"""
+    with ACTION_LOCK:
+        store = _store()
+        prof = store.get(pid)
+        if prof is None:
+            raise HTTPException(404, "没有这个档案")
+        prof.isolate = body.mode
+        store.upsert(prof)
+        store.save()
+        iso = profiles.isolation(prof.exe, prof.resolved_kind)
+        if body.mode == "off":
+            msg = "已关闭数据隔离：多个档案会共用这个软件的配置"
+        elif iso["can"]:
+            msg = f"已开启（{iso['mode']}）：每个档案一份独立数据，可同时登录多个账号"
+        elif body.mode == "full":
+            msg = "这个程序不接受数据目录参数，只能尝试重定向 APPDATA，不保证生效"
+        else:
+            msg = iso["note"]
+        return {"ok": True, "mode": prof.isolate, "can": bool(iso["can"]),
+                "iso_mode": iso["mode"] if iso["can"] else "none",
+                "message": msg}
 
 
 @app.post("/api/profile/{pid}/icon")
@@ -371,6 +407,92 @@ def line_refresh(lid: str) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- 程序库
+def _spawn(base: str, name: str, exe: str, line_id: str, url: str) -> dict[str, Any]:
+    """建一个档案 + 图标 + 快捷方式。已存在同名 id 时自动加后缀。"""
+    store = _store()
+    # 判重只看「同一个东西」：带目标网址的档案（网页版）按网址比，
+    # 不带的（桌面版）按 exe 比。两者不能混着比 —— 网页版档案的 exe
+    # 也是 chrome.exe，混着比会让「加 Chrome」被误判成「已经加过」。
+    # 换一条线路永远允许：「同一个软件走两条线」本来就是这产品的核心用法。
+    for p in store.profiles:
+        if (p.line_id or "") != (line_id or ""):
+            continue
+        if url or p.url:
+            if url and p.url and url.rstrip("/").lower() == p.url.rstrip("/").lower():
+                return {"id": p.id, "name": p.name, "made": [], "dup": True}
+            continue
+        if exe and p.exe.lower() == str(exe).lower():
+            return {"id": p.id, "name": p.name, "made": [], "dup": True}
+
+    prof = AppProfile(id=store.unique_id(profiles.slug(base) or "app"),
+                      name=name or Path(exe).stem, exe=str(exe),
+                      line_id=line_id, url=url)
+    store.upsert(prof)
+    store.save()
+    made: list[str] = []
+    if icons.available():
+        try:
+            made.append(str(icons.render(prof)))
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        made.extend(str(p) for p in shortcut.install(prof))
+    except Exception:  # noqa: BLE001
+        pass
+    return {"id": prof.id, "name": prof.name, "made": made, "dup": False}
+
+
+def _add_from_item(item: dict[str, Any], line_id: str,
+                   force_web: bool = False) -> dict[str, Any]:
+    """按清单条目建档。
+
+    两种形态，都不带软件本体：
+      * 本机装了桌面版 -> 指向那个 exe 的快捷方式（带代理参数启动）；
+      * 本来就是网页服务（Facebook / YouTube）-> 专属浏览器图标，点开直达。
+
+    注意：**有桌面版的条目、本机没装，不自动降级成网页版** —— 那会让人
+    以为「已经装好了」，其实只是开了个网页。这种情况老实引导去官网装。
+    """
+    name = item.get("name") or item.get("key") or "应用"
+    key = item.get("key") or profiles.slug(name)
+    web = item.get("web") or ""
+    has_desktop = bool(item.get("exe"))
+    table = appfind.load()
+
+    exe = None if force_web else appfind.locate_any(item.get("exe") or [], table)
+    if exe:
+        r = _spawn(Path(exe).stem, name, exe, line_id, web)
+        if r["dup"]:
+            return {"ok": True, "kind": "exe", **r,
+                    "message": f"{name} 已经加过了（同一条线路）"}
+        return {"ok": True, "kind": "exe", **r,
+                "message": f"已添加 {name}（桌面版）"}
+
+    if web and (force_web or not has_desktop):
+        br = appfind.browser(table)
+        if br:
+            r = _spawn(key, name, br, line_id, web)
+            if r["dup"]:
+                return {"ok": True, "kind": "web", **r,
+                        "message": f"{name} 已经加过了（同一条线路）"}
+            return {"ok": True, "kind": "web", **r,
+                    "message": f"已添加 {name} 网页版快捷方式"}
+
+    # 下面都是「现在建不了」，要把原因说清楚，别只丢一个报错
+    dl = item.get("download") or ""
+    store_hit = appfind.store_only(item.get("exe") or [], table)
+    if store_hit:
+        raise HTTPException(400, (
+            f"{name} 你装的是微软商店版，它不接受代理参数，带不动。"
+            f"去官网装一份桌面版再回来点一次：{dl or '（官网自行搜索）'}"))
+    if not has_desktop and not web:
+        raise HTTPException(400, f"{name} 没有可用的桌面版或网页版入口")
+    hint = "，也可以先点「网页版」直接用" if web else ""
+    raise HTTPException(400, (
+        f"本机没找到 {name}。先到官网装上（安装向导会带你走），装完回来点一次{hint}："
+        f"{dl or '（官网自行搜索）'}"))
+
+
 @app.get("/api/apps")
 def apps(cached: bool = True) -> dict[str, Any]:
     items = appscan.load_cache() if cached else []
@@ -380,8 +502,17 @@ def apps(cached: bool = True) -> dict[str, Any]:
     # 打标：哪些是「明显需要代理」的（Facebook / YouTube / Codex 这类），
     # 并排到前面 —— 新用户第一屏就该看到自己装的那些。
     items = appdb.mark(items)
-    existing = {p.exe.lower() for p in _store().profiles}
-    return {"items": items, "have": sorted(existing),
+
+    pro = _store().profiles
+    have = {p.exe.lower() for p in pro}
+    have_urls = {p.url for p in pro if p.url}
+    table = appfind.load()
+    rows = appdb.suggest(have, table, have_urls)
+    return {"items": items, "have": sorted(have),
+            # 常用软件：清单全量 + 本机找没找到 + 建过没有。
+            # 前端拿这个渲染「推荐」那一屏，用户不用翻开始菜单。
+            "suggest": rows, "stats": appdb.suggest_stats(rows),
+            "browser": appfind.browser(table) or "",
             "appdb": {"summary": appdb.summary(), "version": appdb.load().get("version", ""),
                       "groups": appdb.groups()}}
 
@@ -392,6 +523,8 @@ def apps_scan() -> dict[str, Any]:
         with ACTION_LOCK:
             items = appscan.scan()
             appscan.save_cache(items)
+            appfind.clear()            # 开始菜单变了，exe 索引一起重建
+            appfind.load(force=True)
             return f"扫到 {len(items)} 个可启动程序"
 
     return _run_bg("扫描已安装程序", work)
@@ -400,32 +533,49 @@ def apps_scan() -> dict[str, Any]:
 @app.post("/api/apps/add")
 def apps_add(body: NewProfile) -> dict[str, Any]:
     with ACTION_LOCK:
-        store = _store()
+        if body.key:
+            item = appdb.get(body.key)
+            if item is None:
+                raise HTTPException(404, f"清单里没有这个软件：{body.key}")
+            return _add_from_item(item, body.line_id, force_web=body.web)
+        if not body.exe:
+            raise HTTPException(400, "要么给 key（清单条目），要么给 exe 路径")
         exe = Path(body.exe)
         if not exe.is_file():
             raise HTTPException(400, f"找不到程序：{body.exe}")
-        name = body.name or exe.stem
-        # id 用 exe 文件名（英文/数字，路径里安全）；
-        # 中文名放 name 字段，两者分开，别让 slug 把 id 全抹成 profile。
-        base = profiles.slug(exe.stem) if exe.stem else "app"
-        if base == "profile":
-            base = f"app-{abs(hash(str(exe).lower())) % 10000:04d}"
-        prof = AppProfile(id=store.unique_id(base), name=name, exe=str(exe),
-                          line_id=body.line_id, url=body.url)
-        store.upsert(prof)
-        store.save()
-        made: list[str] = []
-        if icons.available():
+        r = _spawn(exe.stem, body.name or exe.stem, str(exe), body.line_id, body.url)
+        return {"ok": True, "kind": "exe", **r, "message": f"已添加 {r['name']}"}
+
+
+@app.post("/api/apps/add-batch")
+def apps_add_batch(body: BatchAdd) -> dict[str, Any]:
+    """「一键添加本机已装的全部常用软件」。最多 30 个，逐个结果都回报。"""
+    added: list[str] = []
+    names: list[str] = []
+    dup: list[str] = []
+    fail: list[dict[str, str]] = []
+    with ACTION_LOCK:
+        for key in body.keys[:30]:
+            item = appdb.get(key)
+            if item is None:
+                fail.append({"key": key, "why": "清单里没有这个条目"})
+                continue
             try:
-                made.append(str(icons.render(prof)))
-            except Exception:  # noqa: BLE001
-                pass
-        try:
-            made.extend(str(p) for p in shortcut.install(prof))
-        except Exception:  # noqa: BLE001
-            pass
-        return {"ok": True, "id": prof.id, "made": made,
-                "message": f"已添加 {prof.name}"}
+                r = _add_from_item(item, body.line_id)
+                name = f"{r['name']}（{'桌面版' if r['kind'] == 'exe' else '网页版'}）"
+                (dup if r.get("dup") else names).append(name)
+                added.append(key)
+            except HTTPException as e:
+                fail.append({"key": key, "why": str(e.detail)})
+            except Exception as e:  # noqa: BLE001
+                fail.append({"key": key, "why": f"{type(e).__name__}: {e}"})
+    bits = [f"已添加 {len(names)} 个"]
+    if dup:
+        bits.append(f"{len(dup)} 个早就加过了")
+    if fail:
+        bits.append(f"{len(fail)} 个没加成")
+    return {"ok": True, "added": added, "names": names, "dup": dup,
+            "failed": fail, "message": "，".join(bits)}
 
 
 # --------------------------------------------------------------------------- 设置
@@ -491,6 +641,28 @@ def set_default_line(body: DefaultLineBody) -> dict[str, Any]:
 
 class OpenDirBody(BaseModel):
     what: str = "data"          # data / logs / shortcuts / apps / code
+
+
+class OpenUrlBody(BaseModel):
+    url: str
+    key: str = ""               # 可选：来自清单哪一条（只用于回报文案）
+
+
+@app.post("/api/open-url")
+def open_url(body: OpenUrlBody) -> dict[str, Any]:
+    """用系统默认浏览器打开一个网址 —— 「去官网下载」的那个按钮。
+
+    只在 http/https 白名单内开，避免被当成任意命令执行入口。
+    """
+    url = (body.url or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "只支持 http / https 链接")
+    try:
+        os.startfile(url)           # noqa: S606  交给系统默认浏览器
+    except OSError:
+        import webbrowser
+        webbrowser.open(url)
+    return {"ok": True, "message": "已在浏览器中打开下载页"}
 
 
 @app.post("/api/open-dir")

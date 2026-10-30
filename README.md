@@ -81,10 +81,23 @@ Windows per-app proxy manager with independent routing for multiple Chrome insta
 - 批量测速、健康检查、单节点连通性探测
 
 **分应用**
-- 从已安装程序里挑（开始菜单扫描，本机 181 个程序约 1.9 秒）
+- **常用软件一键添加**：内置 73 条清单（Telegram / WhatsApp / Messenger / Discord / Slack /
+  Facebook / Instagram / X / YouTube / Netflix / Spotify / ChatGPT / Claude / Notion / Steam …），
+  本机装了的一键建档，没装的给官网下载入口。
+  **不带软件本体**：只给两样东西 —— 桌面版程序的快捷方式，或者网页版的专属浏览器图标。
+- 桌面版没装、又只想先能用：点「网页版」，给你一个独立的浏览器档案
+  （自己的 `--user-data-dir`，跟平时那个浏览器完全隔离），点开直达该网站。
+- 从已安装程序里挑（开始菜单扫描，本机 181 个程序约 1.9 秒）；绿色版 / 商店版另有
+  注册表 + 常见安装根浅扫兜底，商店版会被识别出来并提示装官网版（它不接受代理参数）。
 - 浏览器走 `--user-data-dir` + `--proxy-server`，其余程序注入 `HTTP_PROXY` / `HTTPS_PROXY`
-- 每个档案独立数据目录，所以同一程序多开互不打架
-- 自动生成带角标的图标（底色 + 大字 = 软件，右下角圆标 = 线路）与桌面快捷方式
+- **同软件多开·全面隔离**：每个档案一份独立用户数据（`apps\<档案>\data`），
+  代价是磁盘多一份（Chrome 一个档案几百 MB 起），换来的是真的互不干扰 ——
+  可同时登录两个账号、删掉一个不碰另一个。按程序各自支持的写法落地：
+  Chromium / Electron 系用 `--user-data-dir`，Telegram 用 `-workdir`，
+  Firefox / Thunderbird 用 `-profile` + `-no-remote`；**表里没有的程序不硬塞参数**，
+  界面上直接说「这个程序没法真多开，多个档案会共用配置」，另可选「强制隔离」
+  （重定向 APPDATA / LOCALAPPDATA，尽力而为、不保证生效）。
+- 自动生成带角标的图标（大字 = 软件名首字，右下角圆标 = 线路）与桌面快捷方式
 
 **界面**
 WeChat 式主界面：左侧软件列表、右侧详情，设置也在主界面里，不堆在右键菜单。
@@ -270,15 +283,16 @@ python scripts\build_release.py --installer  :: 只出安装版
 | `singconf.py` / `xrayconf.py` | 两套配置生成，都有 `sing-box check` / `xray test` 校验 |
 | `coreproc.py` | 起停内核、端口探测、经代理发请求验活 |
 | `registry.py` | `lines.json` + 节点快照 |
-| `profiles.py` / `launcher.py` | 档案存储、组装启动命令、注入代理参数 |
+| `profiles.py` / `launcher.py` | 档案存储、组装启动命令、注入代理参数、**多开隔离**（`isolation()`） |
 | `procwatch.py` | 判断档案对应的程序还开着吗（Chromium 按 `--user-data-dir` 精确匹配） |
 | `pool.py` | 内核按需池：登记、回收（60 秒宽限）、GC |
 | `autosub.py` | 订阅自动更新：到期判断、失败退避、拉到新节点只标记不重启 |
 | `diag.py` | 诊断包：打包 + **凭据打码** + 生成后自检 |
 | `transfer.py` | 配置导入导出：丢端口、丢本机痕迹、孤儿档案改直连 |
-| `icons.py` / `shortcut.py` | 多尺寸 `.ico`、`.lnk`（win32com 优先，pylnk3 兜底） |
+| `icons.py` / `shortcut.py` | 多尺寸 `.ico`（大字取软件名首字）、`.lnk`（win32com 优先，pylnk3 兜底） |
 | `sysproxy.py` / `autostart.py` | 系统代理接管与还原、开机自启 |
-| `appscan.py` / `appdb.py` | 扫开始菜单的已安装程序、「明显需要代理」清单匹配 |
+| `appscan.py` / `appdb.py` | 扫开始菜单的已安装程序、常用软件清单（73 条）与推荐列表 |
+| `appfind.py` | 找「这个程序装在哪」：注册表 App Paths → 索引 → 浅扫，排除商店版 |
 | `tunconf.py` / `tunmgr.py` / `elevate.py` | TUN 配置、启停、一次性提权 |
 | `setup.py` | 新用户接线（订阅 / 分享链接 / 本地端口） |
 
@@ -385,7 +399,12 @@ python -m appproxy.cli start  myproxy
 python -m appproxy.cli stop   myproxy
 
 :: 档案
+python -m appproxy.cli profile suggest            :: 常用软件清单：本机装没装、建没建过
+python -m appproxy.cli profile add --app telegram --line myproxy
+python -m appproxy.cli profile add --app facebook --line myproxy --web   :: 不装也能用，开网页
 python -m appproxy.cli profile add --name "Chrome·A" --exe "C:\...\chrome.exe" --line myproxy
+python -m appproxy.cli profile add --name "Chrome·B" --exe "C:\...\chrome.exe" --line myproxy  :: 同软件第二个实例
+python -m appproxy.cli profile set chrome-b --isolate off     :: 关掉数据隔离（会共用配置）
 python -m appproxy.cli profile launch chrome-a
 python -m appproxy.cli profile list
 
