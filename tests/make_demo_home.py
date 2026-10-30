@@ -95,6 +95,10 @@ def main() -> int:
         profiles.AppProfile(id="telegram", name="Telegram（需代理）",
                             exe=telegram_exe, line_id="airport"),
     ]
+    # 预置的常用软件：左侧第一屏就是它们。跟真实启动一样由 preset.ensure 建，
+    # 绑「跟着默认线路走」。
+    from appproxy import preset
+    preset.ensure(store)
     store.save()
 
     if icons.available():

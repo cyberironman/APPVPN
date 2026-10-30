@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Iterable
@@ -38,7 +39,17 @@ SKIP_DIRS = {
     "crashpad", "crashreports", "installer", "installers", "uninstall",
     "update", "updates", "backup", "backups", "resources", "locales",
     "webcache", "gpucache", "service worker",
+    # 自动化工具自带的浏览器/运行时不认识用户，装在这里是给人跑脚本用的
+    "ms-playwright", "playwright", "puppeteer", "selenium", "webdriver",
 }
+
+# 上面那些工具也可能装在别的地方，路径里带这些字样的一律当「可疑」，
+# 只有在找不到正常版本时才拿来兜底 —— 它们的目录会被工具升级时整片删掉。
+_SUSPECT_MARKERS = (
+    "\\ms-playwright\\", "\\playwright\\", "\\puppeteer\\",
+    "\\selenium\\", "\\webdriver\\", "\\appdata\\local\\temp\\",
+)
+_SUSPECT_RE = re.compile(r"\\chromium-\d+|\\node_modules\\|\\\.cache\\", re.I)
 
 # 浅扫的根目录（顺序即优先级：用户级装的一般比系统级的新）
 _ROOT_ENVS = (
@@ -89,6 +100,16 @@ def usable(path: str | None) -> bool:
         return Path(path).is_file()
     except OSError:
         return False
+
+
+def suspect(path: str | None) -> bool:
+    """这个 exe 是不是「工具自己带的」，不该推荐给用户当默认浏览器。"""
+    if not path:
+        return True
+    low = str(path).replace("/", "\\").lower()
+    if any(m in low for m in _SUSPECT_MARKERS):
+        return True
+    return bool(_SUSPECT_RE.search(low))
 
 
 def roots() -> list[Path]:
@@ -246,10 +267,13 @@ def locate(name: str, table: dict[str, list[str]] | None = None) -> str | None:
         t = load()
     else:
         t = table
-    for cand in t.get(key) or []:
-        if usable(cand):
-            return cand
-    return None
+    # 同一个 exe 名可能落在好几个地方（真浏览器 + 自动化工具自带的）。
+    # 先给「干净」的那些，实在没有才退回可疑路径 —— 总比找不到好。
+    cands = [c for c in (t.get(key) or []) if usable(c)]
+    for c in cands:
+        if not suspect(c):
+            return c
+    return cands[0] if cands else None
 
 
 def locate_any(names: Iterable[str],
@@ -278,6 +302,31 @@ def store_only(names: Iterable[str],
 BROWSER_ORDER = ("chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe",
                  "chromium.exe", "firefox.exe")
 
+# 常见浏览器的标准安装位置。比「翻索引碰运气」可靠得多 ——
+# 索引里同一个 chrome.exe 可能先命中 Playwright / Puppeteer 自带的那份，
+# 那个目录会被工具升级时整片删掉，用它建的快捷方式过几天就点了没反应。
+_BROWSER_PATHS = (
+    r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe",
+    r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe",
+    r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe",
+    r"%PROGRAMFILES%\Microsoft\Edge\Application\msedge.exe",
+    r"%PROGRAMFILES(X86)%\Microsoft\Edge\Application\msedge.exe",
+    r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe",
+    r"%PROGRAMFILES%\BraveSoftware\Brave-Browser\Application\brave.exe",
+    r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe",
+    r"%PROGRAMFILES%\Vivaldi\Application\vivaldi.exe",
+    r"%LOCALAPPDATA%\Vivaldi\Application\vivaldi.exe",
+    r"%PROGRAMFILES%\Mozilla Firefox\firefox.exe",
+    r"%PROGRAMFILES(X86)%\Mozilla Firefox\firefox.exe",
+)
+
 
 def browser(table: dict[str, list[str]] | None = None) -> str | None:
-    return locate_any(BROWSER_ORDER, table)
+    """本机用来开网页的浏览器（标准安装位置优先，其次索引）。"""
+    if table is None:
+        for tpl in _BROWSER_PATHS:
+            hit = os.path.expandvars(tpl)
+            if usable(hit) and not suspect(hit):
+                return hit
+    hit = locate_any(BROWSER_ORDER, table)
+    return hit if usable(hit) else None

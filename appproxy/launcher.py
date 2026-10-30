@@ -69,8 +69,8 @@ def ensure_core(reg: Registry, line: Line, wait: float = 12.0) -> str:
 # --------------------------------------------------------------------------- 主流程
 def launch(profile: profiles.AppProfile, reg: Registry, *, dry_run: bool = False,
            no_core: bool = False) -> int:
-    line = reg.get(profile.line_id) if profile.line_id else None
-    if profile.line_id and line is None:
+    line = reg.resolve(profile.line_id)
+    if profile.line_id and line is None and not reg.is_following_default(profile.line_id):
         raise RuntimeError(f"档案 {profile.id} 绑定的线路 {profile.line_id} 不存在")
 
     if line and not no_core:

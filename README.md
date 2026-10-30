@@ -81,6 +81,14 @@ Windows per-app proxy manager with independent routing for multiple Chrome insta
 - 批量测速、健康检查、单节点连通性探测
 
 **分应用**
+- **开箱就有**：第一次启动，左侧直接摆好 Telegram / WhatsApp / Messenger / Facebook /
+  Instagram / X / YouTube 七条 —— 不用对着空列表发呆，也不用自己去几百个程序里找。
+  **不带软件本体**：本机装了桌面版就指向它，没装就给一个网页版入口（专属浏览器档案，
+  点开直达该网站，跟平时那个浏览器完全隔离）。
+- **跟着默认线路走**：这七条绑的是「默认线路」而不是某条具体线路 —— 你导入订阅之后
+  它们自动挂上，不用回来一个个改；还没导入时左侧那行显示琥珀色的「待选线路」。
+- **删了就不长回来**：你亲手删掉的预置条目会被记下来，以后升级也不会自作主张长回来；
+  想找回，到设置页点「把缺的补回来」。
 - **常用软件一键添加**：内置 73 条清单（Telegram / WhatsApp / Messenger / Discord / Slack /
   Facebook / Instagram / X / YouTube / Netflix / Spotify / ChatGPT / Claude / Notion / Steam …），
   本机装了的一键建档，没装的给官网下载入口。
@@ -292,6 +300,7 @@ python scripts\build_release.py --installer  :: 只出安装版
 | `icons.py` / `shortcut.py` | 多尺寸 `.ico`（大字取软件名首字）、`.lnk`（win32com 优先，pylnk3 兜底） |
 | `sysproxy.py` / `autostart.py` | 系统代理接管与还原、开机自启 |
 | `appscan.py` / `appdb.py` | 扫开始菜单的已安装程序、常用软件清单（73 条）与推荐列表 |
+| `preset.py` | 首次启动建好的那批常用软件（左侧第一屏）、删除记录、不自动复活 |
 | `appfind.py` | 找「这个程序装在哪」：注册表 App Paths → 索引 → 浅扫，排除商店版 |
 | `tunconf.py` / `tunmgr.py` / `elevate.py` | TUN 配置、启停、一次性提权 |
 | `setup.py` | 新用户接线（订阅 / 分享链接 / 本地端口） |
@@ -405,8 +414,13 @@ python -m appproxy.cli profile add --app facebook --line myproxy --web   :: 不�
 python -m appproxy.cli profile add --name "Chrome·A" --exe "C:\...\chrome.exe" --line myproxy
 python -m appproxy.cli profile add --name "Chrome·B" --exe "C:\...\chrome.exe" --line myproxy  :: 同软件第二个实例
 python -m appproxy.cli profile set chrome-b --isolate off     :: 关掉数据隔离（会共用配置）
+python -m appproxy.cli profile set chrome-b --line @default  :: 绑到默认线路（跟着走）
 python -m appproxy.cli profile launch chrome-a
 python -m appproxy.cli profile list
+
+:: 左侧那批常用软件（首次启动自动建好）
+python -m appproxy.cli preset                    :: 看现在有哪些、缺哪几个
+python -m appproxy.cli preset --restore          :: 把缺的补回来
 
 :: 界面与托盘
 python -m appproxy.cli gui                     :: 主界面

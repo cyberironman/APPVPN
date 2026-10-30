@@ -29,7 +29,7 @@ from pathlib import Path
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from appproxy import localport, pool, selfrun, settings  # noqa: E402
+from appproxy import localport, pool, preset, selfrun, settings  # noqa: E402
 
 TITLE = "分应用代理管家"
 GC_INTERVAL = 5.0           # 秒；回收检查频率
@@ -463,6 +463,17 @@ def main(argv: list[str] | None = None) -> int:
         port = _free_port()
     box = ServerBox()
     box.port = port
+
+    # 首次启动就把常用软件建好，别让用户对着空列表发呆。
+    # 必须赶在服务起来之前做完 —— 否则第一屏拿到的是空列表，
+    # 用户看到空白就关掉了，等不到刷新。只在第一次跑（版本号记在 profiles.json）。
+    try:
+        r = preset.ensure()
+        if r.get("created"):
+            names = "、".join(x["name"] for x in r["created"])
+            log(f"已预置 {len(r['created'])} 个常用软件：{names}")
+    except Exception as e:  # noqa: BLE001  预置失败绝不能挡住界面
+        log(f"[!] 预置常用软件失败：{type(e).__name__}: {e}")
 
     t = threading.Thread(target=serve_http, args=(port, box), daemon=True, name="http")
     t.start()

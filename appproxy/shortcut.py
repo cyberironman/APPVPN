@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import selfrun, settings
+from .registry import DEFAULT_LINE
 
 
 def python_exe() -> Path:
@@ -76,6 +77,19 @@ def create_lnk(lnk: Path, target: Path, arguments: str = "", working_dir: str = 
                 from plain_err
 
 
+def _label(profile) -> str:
+    """快捷方式上显示的线路名。
+
+    `@default` 是内部值，直接显示出来用户看不懂 —— 说人话「默认线路」。
+    """
+    lid = (profile.line_id or "").strip()
+    if not lid:
+        return "直连"
+    if lid == DEFAULT_LINE:
+        return "默认线路"
+    return lid
+
+
 def install(profile, *, desktops: bool = True) -> list[Path]:
     """建快捷方式：母版放 shortcuts\\，再往桌面投副本。返回生成的文件列表。"""
     icon = profile.icon_path()
@@ -83,11 +97,11 @@ def install(profile, *, desktops: bool = True) -> list[Path]:
         icon = profile.exe_path()
     name = f"{profile.name}.lnk"
     made: list[Path] = []
+    label = f"{profile.name}（{_label(profile)}）"
 
     master = create_lnk(settings.shortcuts_dir() / name,
                         python_exe(), launcher_arguments(profile.id),
-                        selfrun.self_cwd(), str(icon),
-                        f"{profile.name}（{profile.line_id or '直连'}）")
+                        selfrun.self_cwd(), str(icon), label)
     made.append(master)
     profile.shortcut = str(master)
 
@@ -96,8 +110,7 @@ def install(profile, *, desktops: bool = True) -> list[Path]:
             try:
                 made.append(create_lnk(desk / name, python_exe(),
                                        launcher_arguments(profile.id),
-                                       selfrun.self_cwd(), str(icon),
-                                       f"{profile.name}（{profile.line_id or '直连'}）"))
+                                       selfrun.self_cwd(), str(icon), label))
             except Exception:  # noqa: BLE001  某个桌面写不进去（权限/只读）不影响其他
                 continue
     return made

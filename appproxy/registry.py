@@ -19,6 +19,11 @@ from .models import Line, Node
 
 SCHEMA_VERSION = 1
 
+# 档案的 line_id 写成这个值 = 「跟着默认线路走」，不是某条具体线路。
+# 首次启动预置的那批常用软件用它：建档案时用户还没导入订阅，导入之后
+# 它们自动跟过去，不用回来一个个改。
+DEFAULT_LINE = "@default"
+
 
 def _read_json(path: Path) -> dict:
     if not path.exists():
@@ -162,6 +167,28 @@ class Registry:
     # ---------------------------------------------------------------- 线路
     def get(self, line_id: str) -> Line | None:
         return next((l for l in self.lines if l.id == line_id), None)
+
+    def resolve(self, line_id: str) -> Line | None:
+        """把档案里的 line_id 解析成真实线路（认识 `@default`）。
+
+        规则，按顺序：
+          1. 普通 id -> 就是它，找不到返回 None（调用方要报错）；
+          2. `@default` -> defaults 里的 default_line；
+          3. `@default` 且没设默认线路、只有一条线 -> 用那条。
+             这条很重要：新用户导入一条订阅后，左侧预置的那批软件
+             应该立刻能上网，而不是逼他先去设置里指定「默认线路」。
+        """
+        lid = (line_id or "").strip()
+        if lid != DEFAULT_LINE:
+            return self.get(lid) if lid else None
+        want = str(self.defaults.get("default_line") or "").strip()
+        line = self.get(want) if want else None
+        if line is None and len(self.lines) == 1:
+            line = self.lines[0]
+        return line
+
+    def is_following_default(self, line_id: str) -> bool:
+        return (line_id or "").strip() == DEFAULT_LINE
 
     def require(self, line_id: str) -> Line:
         line = self.get(line_id)

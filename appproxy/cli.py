@@ -49,7 +49,7 @@ from appproxy import coreproc, latency, settings, singconf, subscription, xrayco
 from appproxy import appdb, appfind, appscan, autostart, icons, profiles, sysproxy  # noqa: E402
 from appproxy import shortcut as shortcutmod  # noqa: E402
 from appproxy.models import Line  # noqa: E402
-from appproxy.registry import PORT_MIN, Registry  # noqa: E402
+from appproxy.registry import DEFAULT_LINE, PORT_MIN, Registry  # noqa: E402
 
 OK = "[OK]"
 FAIL = "[!!]"
@@ -376,7 +376,20 @@ def _pstore() -> profiles.ProfileStore:
 def _check_line(reg: Registry, line_id: str) -> Line:
     if not line_id:
         raise SystemExit("必须指定 --line（不带 --line 的档案是直连，请用 profile add --direct）")
+    if line_id == DEFAULT_LINE:
+        # 「跟着默认线路走」是个特殊值，不是真实线路
+        return None
     return reg.require(line_id)
+
+
+def _line_ref(reg: Registry, line_id: str) -> str:
+    """把命令行里的线路参数变成档案里存的 line_id。
+
+    `@default` 是特殊值（跟着默认线路走），不是真实线路，直接放行。
+    """
+    if line_id == DEFAULT_LINE:
+        return DEFAULT_LINE
+    return _check_line(reg, line_id).id
 
 
 def _publish(store: profiles.ProfileStore, prof: profiles.AppProfile, a) -> list[Path]:
@@ -418,7 +431,7 @@ def cmd_profile_add(reg: Registry, a) -> int:
     if a.direct:
         line_id = ""
     else:
-        line_id = _check_line(reg, a.line).id
+        line_id = _line_ref(reg, a.line)
 
     if getattr(a, "app", ""):
         return _add_from_catalog(store, a, line_id)
@@ -567,7 +580,7 @@ def cmd_profile_set(reg: Registry, a) -> int:
     if a.direct:
         prof.line_id = ""
     elif a.line:
-        prof.line_id = _check_line(reg, a.line).id
+        prof.line_id = _line_ref(reg, a.line)
     if a.kind:
         prof.kind = a.kind
     if a.url is not None:
@@ -817,6 +830,37 @@ def cmd_appdb(reg: Registry, a) -> int:
         print(f"  [{(item.get('level') or ''):5}] {item['name']:<22}{exe:<26}{item.get('why', '')}")
     if len(appdb.entries()) > a.limit:
         print(f"  ... 共 {len(appdb.entries())} 条（--limit 调整）")
+    return 0
+
+
+def cmd_preset(reg: Registry, a) -> int:
+    """左侧那批常用软件：现在有哪些、缺哪些、要不要补回来。"""
+    from appproxy import preset
+
+    store = _pstore()
+    if a.restore:
+        r = preset.ensure(store, force=True)
+        made = r.get("created") or []
+        if not made:
+            print(f"{OK} 常用软件都在列表里了")
+        for x in made:
+            how = "桌面版" if x["kind"] == "exe" else "网页版"
+            print(f"{OK} 补回 {x['name']}（{how}）")
+        return 0
+
+    st = preset.info(store)
+    print(f"常用软件 {st['in_list']}/{st['total']} 个在左侧列表里（预置版本 {st['applied']}）")
+    # 按左侧列表的实际顺序打印（预置在前、按清单序号），不是存储顺序
+    order = {e["key"]: i for i, e in enumerate(preset.wanted())}
+    rows = sorted((p for p in store.profiles if p.preset),
+                  key=lambda p: order.get(p.id, 999))
+    for p in rows:
+        line = reg.resolve(p.line_id)
+        where = line.name if line else "待选线路（跟着默认线路走）"
+        print(f"  {p.id:12} {p.name:14} {where}")
+    if st["missing"]:
+        print(f"  缺：{'、'.join(x['name'] for x in st['missing'])}")
+        print("  补回来：preset --restore")
     return 0
 
 
@@ -1256,6 +1300,11 @@ def main(argv: list[str] | None = None) -> int:
     pdoc = sub.add_parser("doctor", help="环境体检：系统版本 / 运行库 / 内核 / 目录权限")
     pdoc.add_argument("--fix", help="直接修某项，例如 --fix vc_runtime 或 wintun")
     pdoc.set_defaults(fn=cmd_doctor)
+
+    # ------------------------------------------------------------ 常用软件
+    ppre = sub.add_parser("preset", help="左侧常用软件：看现在有哪些 / 把缺的补回来")
+    ppre.add_argument("--restore", action="store_true", help="把缺的补回左侧列表")
+    ppre.set_defaults(fn=cmd_preset)
 
     # ------------------------------------------------------------ 订阅自动更新
     pau = sub.add_parser("auto", help="订阅自动更新：看状态 / 改间隔 / 立刻拉一遍")

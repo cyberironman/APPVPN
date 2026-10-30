@@ -129,6 +129,7 @@ class AppProfile:
     shortcut: str = ""           # 最近一次生成的 .lnk
     created: int = 0
     isolate: str = "auto"        # auto / full / off —— 多开时怎么隔离用户数据
+    preset: bool = False         # 首次启动自动建的（用户删了就不再长回来）
 
     def __post_init__(self) -> None:
         self.id = slug(self.id)
@@ -259,6 +260,11 @@ class ProfileStore:
     def __init__(self, path: Path | None = None):
         self.path = Path(path) if path else settings.profiles_path()
         self.profiles: list[AppProfile] = []
+        # 预置清单做到第几版了（见 preset.py）。0 = 从没预置过。
+        self.preset_version = 0
+        # 用户主动删掉的预置条目。删了就等于说「我不要这个」，
+        # 以后升级预置清单也不能把它长回来（只能用户自己在设置里点恢复）。
+        self.preset_removed: list[str] = []
 
     def load(self) -> "ProfileStore":
         if self.path.exists():
@@ -266,6 +272,11 @@ class ProfileStore:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 raw = {}
+            if not isinstance(raw, dict):
+                raw = {}
+            self.preset_version = int(raw.get("preset_version") or 0)
+            removed = raw.get("preset_removed") or []
+            self.preset_removed = [str(x) for x in removed if x]
             for item in raw.get("profiles") or []:
                 try:
                     self.profiles.append(AppProfile.from_dict(item))
@@ -276,7 +287,9 @@ class ProfileStore:
     def save(self) -> Path:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "w", encoding="utf-8", newline="\n") as f:
-            json.dump({"version": 1, "profiles": [p.to_dict() for p in self.profiles]},
+            json.dump({"version": 1, "preset_version": self.preset_version,
+                       "preset_removed": self.preset_removed,
+                       "profiles": [p.to_dict() for p in self.profiles]},
                       f, ensure_ascii=False, indent=2)
         return self.path
 
@@ -299,7 +312,12 @@ class ProfileStore:
 
     def remove(self, pid: str) -> bool:
         before = len(self.profiles)
+        gone = next((p for p in self.profiles if p.id == pid), None)
         self.profiles = [p for p in self.profiles if p.id != pid]
+        if gone is not None and gone.preset and pid not in self.preset_removed:
+            # 删掉预置条目 = 明确表示「不要这个」。记下来，以后升级预置清单
+            # 也不能把它长回来 —— 用户想找回可以自己在设置里点「补回来」。
+            self.preset_removed.append(pid)
         return len(self.profiles) != before
 
     def by_line(self, line_id: str) -> list[AppProfile]:

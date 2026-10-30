@@ -28,6 +28,38 @@ from .profiles import AppProfile, ProfileStore, isolation
 from .registry import Registry
 
 
+# --------------------------------------------------------------------------- 预置常用软件
+_PRESET_RANK: dict[str, int] | None = None
+
+
+def _preset_rank() -> dict[str, int]:
+    """清单条目 id -> 预置序号（决定左侧列表的排列顺序）。
+
+    只读清单，读一次就缓存 —— 快照每 6 秒调一次，不能每次都去读 JSON。
+    """
+    global _PRESET_RANK
+    if _PRESET_RANK is None:
+        rank: dict[str, int] = {}
+        try:
+            from . import appdb
+            for item in appdb.entries():
+                n = int(item.get("preset") or 0)
+                if n > 0:
+                    key = str(item.get("key") or "").strip().lower()
+                    if key:
+                        rank[key] = n
+        except Exception:  # noqa: BLE001  清单读不了就退回原顺序
+            rank = {}
+        _PRESET_RANK = rank
+    return _PRESET_RANK
+
+
+def reload_preset_rank() -> None:
+    """清单更新后清缓存（测试用）。"""
+    global _PRESET_RANK
+    _PRESET_RANK = None
+
+
 # --------------------------------------------------------------------------- 登记表
 def _ledger_path() -> Path:
     return settings.data_dir() / "pool.json"
@@ -149,8 +181,12 @@ def start_for_profile(reg: Registry, profile: AppProfile) -> str:
     """给一个档案准备代理。直连档案不需要内核。"""
     if not profile.line_id:
         return "直连档案，不需要内核"
-    line = reg.get(profile.line_id)
+    line = reg.resolve(profile.line_id)
     if line is None:
+        if reg.is_following_default(profile.line_id):
+            # 预置的常用软件在用户导入订阅之前就是这个状态：不报错，
+            # 按直连启动（网页打不开是预期内的），面板会提示去加线路。
+            return "还没有可用线路，本次按直连启动"
         raise RuntimeError(f"档案 {profile.id} 绑定的线路 {profile.line_id} 不存在")
     msg = ensure_core(reg, line)
     _mark(line.id, profile.id)
@@ -164,8 +200,23 @@ def stop_line(line: Line) -> int:
     return n
 
 
-def users_of(line_id: str, profiles: list[AppProfile]) -> list[AppProfile]:
-    return [p for p in profiles if p.line_id == line_id]
+def _on_line(reg: Registry, profile: AppProfile, line_id: str) -> bool:
+    """这个档案现在是不是走 line_id 这条线（认识 `@default`）。"""
+    if not profile.line_id:
+        return False
+    if profile.line_id == line_id:
+        return True
+    if not reg.is_following_default(profile.line_id):
+        return False
+    hit = reg.resolve(profile.line_id)
+    return hit is not None and hit.id == line_id
+
+
+def users_of(line_id: str, profiles: list[AppProfile],
+             reg: Registry | None = None) -> list[AppProfile]:
+    if reg is None:
+        return [p for p in profiles if p.line_id == line_id]
+    return [p for p in profiles if _on_line(reg, p, line_id)]
 
 
 # 宽限期：刚登记的内核先留着。
@@ -197,7 +248,7 @@ def gc(reg: Registry | None = None, store: ProfileStore | None = None,
             continue
         if now - float(marked[line_id].get("since") or 0) < GRACE_SECONDS:
             continue                            # 刚起来，先别动
-        users = users_of(line_id, store.profiles)
+        users = users_of(line_id, store.profiles, reg)
         if any(alive.get(p.id) for p in users):
             continue                            # 还有软件在用，保留
         n = coreproc.stop(line.config_path())
@@ -230,7 +281,7 @@ def heal(reg: Registry | None = None, store: ProfileStore | None = None,
     out: list[str] = []
 
     for line in reg.lines:
-        users = users_of(line.id, store.profiles)
+        users = users_of(line.id, store.profiles, reg)
         if not any(alive.get(p.id) for p in users):
             _HEAL_STATE.pop(line.id, None)     # 没人用了，交回给 gc
             continue
@@ -267,14 +318,14 @@ def release(reg: Registry, store: ProfileStore, profile: AppProfile,
     """
     if not profile.line_id:
         return "直连档案，无需处理"
-    line = reg.get(profile.line_id)
+    line = reg.resolve(profile.line_id)
     if line is None:
         _unmark(profile.line_id, profile.id)
         return "绑定的线路已不存在"
 
     snap = procwatch.snapshot()
     others = [p for p in store.profiles
-              if p.line_id == line.id and p.id != profile.id and snap.alive(p)]
+              if p.id != profile.id and _on_line(reg, p, line.id) and snap.alive(p)]
     _unmark(line.id, profile.id)
 
     if others and not force:
@@ -327,7 +378,7 @@ def state(reg: Registry | None = None, store: ProfileStore | None = None) -> dic
     lines = []
     for line in reg.lines:
         up = coreproc.port_open(line.http_port)
-        users = users_of(line.id, store.profiles)
+        users = users_of(line.id, store.profiles, reg)
         running_users = [p.id for p in users if snap.alive(p)]
         lines.append({
             "id": line.id,
@@ -344,8 +395,17 @@ def state(reg: Registry | None = None, store: ProfileStore | None = None) -> dic
         })
 
     profiles = []
-    for p in store.profiles:
-        line = reg.get(p.line_id) if p.line_id else None
+    # 左侧列表的顺序：预置的常用软件排在最前（按清单里的 preset 序号），
+    # 用户自己建的排在后面（按创建时间）。这样新用户一打开，
+    # Telegram / WhatsApp 这类就在第一屏，不用自己去找。
+    preset_rank = _preset_rank()
+    ordered = sorted(
+        store.profiles,
+        key=lambda p: (0, preset_rank.get(p.id, 999), p.created) if p.preset
+        else (1, 0, p.created),
+    )
+    for p in ordered:
+        line = reg.resolve(p.line_id)
         iso = isolation(p.exe, p.resolved_kind)
         # 实际生效的隔离方式要把「用户关掉了」「程序不支持」都算进去，
         # 界面照着这个说人话，别拿程序理论上支持什么当结论
@@ -362,7 +422,13 @@ def state(reg: Registry | None = None, store: ProfileStore | None = None) -> dic
             "name": p.name,
             "exe": p.exe,
             "line_id": p.line_id,
-            "line_name": line.name if line else ("直连" if not p.line_id else p.line_id),
+            "line_name": (line.name if line else
+                          ("直连" if not p.line_id else
+                           ("待选线路" if reg.is_following_default(p.line_id)
+                            else p.line_id))),
+            "follows_default": reg.is_following_default(p.line_id),
+            "preset": bool(p.preset),
+            "preset_rank": preset_rank.get(p.id, 0) if p.preset else 0,
             "kind": p.resolved_kind,
             "proxy": f"127.0.0.1:{line.http_port}" if line and line.http_port else "",
             "alive": snap.alive(p),

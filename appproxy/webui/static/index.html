@@ -62,6 +62,10 @@ code{font-family:"Cascadia Mono",Consolas,monospace;font-size:11.5px}
   white-space:nowrap}
 .item-sub{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;margin-top:1px}
+.item-sub.pend{color:var(--amber)}
+.tag-common{font-size:10px;line-height:15px;padding:0 5px;border-radius:3px;
+  background:#eaf1fd;color:#2b6de5;margin-left:6px;vertical-align:1px;
+  flex:0 0 auto;font-weight:500}
 .pip{width:7px;height:7px;border-radius:50%;background:#c2c2cc;flex:0 0 auto;margin-left:2px}
 .pip.on{background:var(--green)}
 .empty-side{padding:28px 16px;color:var(--muted);font-size:12px;text-align:center;line-height:1.9}
@@ -296,15 +300,22 @@ function renderList() {
     </div>`;
     return;
   }
-  box.innerHTML = items.map(p => `
+  box.innerHTML = items.map(p => {
+    // 预置的常用软件在用户导入订阅之前就是这个状态：绑着「跟着默认线路走」，
+    // 但一条线路都还没有。灰色小字会被当成正常，必须用琥珀色点出来。
+    const pend = !p.proxy && p.follows_default;
+    // 「常用」小标签：告诉用户这一条是软件开箱就摆好的，不是他自己加的
+    const tag = p.preset ? '<span class="tag-common">常用</span>' : "";
+    return `
     <div class="item ${p.id === S.sel ? "sel" : ""}" data-id="${esc(p.id)}">
       ${avatar(p.id, p.name)}
       <div class="item-body">
-        <div class="item-name">${esc(p.name)}</div>
-        <div class="item-sub">${esc(p.line_name)}${p.proxy ? " · " + esc(p.proxy) : ""}</div>
+        <div class="item-name">${esc(p.name)}${tag}</div>
+        <div class="item-sub${pend ? " pend" : ""}">${esc(p.line_name)}${p.proxy ? " · " + esc(p.proxy) : ""}</div>
       </div>
       <span class="pip ${p.alive ? "on" : ""}"></span>
-    </div>`).join("");
+    </div>`;
+  }).join("");
   box.querySelectorAll(".item").forEach(el => {
     el.onclick = () => { S.sel = el.dataset.id; S.view = "profile"; renderAll(); };
   });
@@ -371,10 +382,16 @@ function renderMain() {
         <div class="row"><label>状态</label><div class="val" id="d-status">${badgeFor(p)}</div></div>
         <div class="row"><label>绑定线路</label><div class="val">
           <select id="sel-line">
-            <option value="">不经过代理（直连）</option>
+            <option value="@default" ${p.line_id === "@default" ? "selected" : ""}>
+              跟着默认线路走（推荐）</option>
+            <option value="" ${p.line_id === "" ? "selected" : ""}>不经过代理（直连）</option>
             ${(S.data.lines || []).map(l => `<option value="${esc(l.id)}" ${l.id === p.line_id ? "selected" : ""}>
               ${esc(l.name)} · ${l.http_port}${l.running ? "（内核在跑）" : ""}</option>`).join("")}
           </select>
+          ${p.line_id === "@default"
+            ? `<div style="font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.7">
+                 换线路不用回来改这里 —— 改「默认线路」，这一批一起动。</div>`
+            : ""}
         </div></div>
         <div class="row"><label>程序</label><div class="val"><code>${esc(p.exe)}</code></div></div>
         <div class="row"><label>数据隔离</label><div class="val">
@@ -829,6 +846,7 @@ function viewSettings() {
   const dl = st.default_line || "";
   const gh = (st.subs_global_hours === undefined || st.subs_global_hours === null)
     ? 12 : st.subs_global_hours;
+  const ps = st.preset || {};
   return `
   <div class="page-head">
     <h1>设置</h1>
@@ -872,6 +890,24 @@ function viewSettings() {
         })()}
       </div>`;
     }).join("") : `<div class="line-card" style="color:var(--muted)">还没有线路。用命令行 <code>add</code> 添加一条订阅。</div>`}
+
+    <div class="sec-title">左侧常用软件（默认就摆好，不用自己去找）</div>
+    <div class="rows">
+      <div class="row"><label>状态</label><div class="val"
+        style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span>${(ps.in_list || 0)} / ${(ps.total || 0)} 个在列表里</span>
+        <button class="btn btn-ghost btn-sm" id="preset-restore">把缺的补回来</button>
+      </div></div>
+      <div class="row" style="color:var(--muted);font-size:11.5px;display:block;line-height:1.8">
+        第一次启动时会自动建好 Telegram / WhatsApp / Messenger / Facebook /
+        Instagram / X / YouTube 这几条：<b>本机装了桌面版就指向它，没装就给网页版</b>
+        （一个专属浏览器窗口，点开直达，跟你平时的浏览器互不干扰）。
+        <b>不带任何软件本体</b>，也不会往桌面塞快捷方式。<br>
+        它们绑的是「跟着默认线路走」，所以你导入订阅之后会自动挂上，不用回来一个个改；
+        还没有线路时左侧那一行会显示琥珀色的「待选线路」。删掉的不会自己长回来 ——
+        想要就点上面那个按钮补。
+      </div>
+    </div>
 
     <div class="sec-title">订阅自动更新（节点过期不用再自己点）</div>
     <div class="rows">
@@ -1021,6 +1057,16 @@ function bindSettings() {
       await loadSettings();
     };
   });
+  const presetBtn = $("#preset-restore");
+  if (presetBtn) presetBtn.onclick = async () => {
+    presetBtn.disabled = true; presetBtn.textContent = "补回中…";
+    try {
+      const r = await api("/api/preset/restore", {method: "POST"});
+      toast(r.message, 4000);
+    } catch (e) { toast(e.message, 5000); }
+    presetBtn.disabled = false; presetBtn.textContent = "把缺的补回来";
+    await refresh(true); await loadSettings();
+  };
   const subIv = $("#sub-iv");
   if (subIv) subIv.onchange = async () => {
     const h = parseInt(subIv.value, 10) || 0;

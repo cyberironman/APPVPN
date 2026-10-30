@@ -28,10 +28,10 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from .. import (appdb, appfind, appscan, autostart, coreproc, gui_support, icons,
-                latency, launcher, pool, preflight, procwatch, profiles, settings,
-                setup, shortcut, subscription, sysproxy, tunmgr, xrayconf)
+                latency, launcher, pool, preflight, preset, procwatch, profiles,
+                settings, setup, shortcut, subscription, sysproxy, tunmgr, xrayconf)
 from ..profiles import AppProfile
-from ..registry import Registry
+from ..registry import DEFAULT_LINE, Registry
 
 ACTION_LOCK = threading.RLock()
 # TUN 单独一把锁：等 UAC 的时间可能有几十秒，不能占着 ACTION_LOCK
@@ -263,7 +263,8 @@ def profile_set_line(pid: str, body: LineRef) -> dict[str, Any]:
         prof = store.get(pid)
         if prof is None:
             raise HTTPException(404, "没有这个档案")
-        if body.line_id and reg.get(body.line_id) is None:
+        if body.line_id and body.line_id != DEFAULT_LINE \
+                and reg.get(body.line_id) is None:
             raise HTTPException(400, f"没有这条线路：{body.line_id}")
         prof.line_id = body.line_id
         store.upsert(prof)
@@ -578,6 +579,24 @@ def apps_add_batch(body: BatchAdd) -> dict[str, Any]:
             "failed": fail, "message": "，".join(bits)}
 
 
+@app.post("/api/preset/restore")
+def preset_restore() -> dict[str, Any]:
+    """把用户删掉的常用软件补回左侧列表。
+
+    只补「现在缺的那些」，用户自己建的档案、改过的档案一律不动 ——
+    这是「恢复」不是「重置」，别把人的东西弄没了。
+    """
+    with ACTION_LOCK:
+        r = preset.ensure(_store(), force=True)
+        ok, bad = r.get("created") or [], r.get("skipped") or []
+        if not ok:
+            return {"ok": True, "made": [],
+                    "message": f"常用软件都在列表里了（{len(bad)} 个已有同名档案）"}
+        names = "、".join(x["name"] for x in ok)
+        return {"ok": True, "made": ok,
+                "message": f"补回 {len(ok)} 个：{names}"}
+
+
 # --------------------------------------------------------------------------- 设置
 @app.get("/api/settings")
 def get_settings() -> dict[str, Any]:
@@ -602,6 +621,8 @@ def get_settings() -> dict[str, Any]:
         "autostart": autostart.status(),
         "tun": tunmgr.status(),
         "appdb": appdb.summary(),
+        # 左侧那批常用软件：一共几个、现在列表里还剩几个（用户删掉的算他不要了）
+        "preset": preset.info(_store()),
         "needs_setup": not reg.lines,
         "home": str(settings.home()),
         # 数据目录：默认是「软件目录\AppProxyData」，用户可以在设置里改
