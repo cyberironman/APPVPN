@@ -132,3 +132,67 @@ def test_heal_persists_when_save(ready, free_ports):
     reloaded = Registry().load()          # load() 内部会跑体检
     assert _in_range(reloaded.lines[0].http_port)
     assert Registry().load().lines[0].http_port == reloaded.lines[0].http_port
+
+
+def test_change_drops_stale_runtime_config(ready, free_ports):
+    """换端口之后，`runtime/<id>.json` 必须作废。
+
+    这是真机上踩到的坑：v0.6.4 只改了 lines.json 的端口，配置里 inbounds 还是
+    10930。`ensure_core` 见配置已存在就直接拿它起内核 → 内核去听旧端口 →
+    界面报「25 秒内端口未就绪」，而 `sing-box-<id>.log` 是空的，极难查。
+    """
+    reg = Registry()
+    reg.lines = [_line("alpha", 10930)]
+    reg.save()
+    cfg = reg.lines[0].config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text('{"inbounds":[{"listen_port":10930}]}', encoding="utf-8")
+
+    reg.heal_ports(save=False)
+    assert reg.lines[0].http_port != 10930
+    assert not cfg.exists(), "端口换了，旧配置留着就会去听旧端口"
+
+
+def test_no_change_keeps_config(ready, free_ports):
+    """端口本来就正常时，配置不许被删（删了虽然能重建，但没必要让用户多等）。"""
+    reg = Registry()
+    reg.lines = [_line("alpha", 17002)]
+    reg.save()
+    cfg = reg.lines[0].config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text('{"inbounds":[{"listen_port":17002}]}', encoding="utf-8")
+
+    assert reg.heal_ports(save=False) == []
+    assert cfg.exists()
+
+
+def test_change_drops_stale_runtime_config(ready, free_ports):
+    """换端口之后，`runtime/<id>.json` 必须作废。
+
+    这是真机上踩到的坑：v0.6.4 只改了 lines.json 的端口，配置里 inbounds 还是
+    10930。`ensure_core` 见配置已存在就直接拿它起内核 → 内核去听旧端口 →
+    界面报「25 秒内端口未就绪」，而 `sing-box-<id>.log` 是空的，极难查。
+    """
+    reg = Registry()
+    reg.lines = [_line("alpha", 10930)]
+    reg.save()
+    cfg = reg.lines[0].config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text('{"inbounds":[{"listen_port":10930}]}', encoding="utf-8")
+
+    reg.heal_ports(save=False)
+    assert reg.lines[0].http_port != 10930
+    assert not cfg.exists(), "端口换了，旧配置留着就会去听旧端口"
+
+
+def test_no_change_keeps_config(ready, free_ports):
+    """端口本来就正常时，配置不许被删（删了虽然能重建，但没必要让用户多等）。"""
+    reg = Registry()
+    reg.lines = [_line("alpha", 17002)]
+    reg.save()
+    cfg = reg.lines[0].config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text('{"inbounds":[{"listen_port":17002}]}', encoding="utf-8")
+
+    assert reg.heal_ports(save=False) == []
+    assert cfg.exists()

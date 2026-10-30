@@ -248,9 +248,32 @@ class Registry:
         if changes:
             for lid, old, new in changes:
                 print(f"[端口] 线路 {lid}：{old or '未分配'} → {new}（随机分配，避免冲突）")
+                self._drop_stale_config(lid, old)
             if save:
                 self.save()
         return changes
+
+    def _drop_stale_config(self, line_id: str, old_port: int = 0) -> None:
+        """端口换了，编译好的内核配置就作废了 —— 必须删掉。
+
+        这是 v0.6.4 埋下的坑：`heal_ports` 只改了 `lines.json` 里的端口，
+        而 `runtime/<id>.json` 里 inbounds 还是旧端口。`ensure_core` 见配置已存在
+        就直接拿它起内核，于是内核去听一个没人认的旧端口，界面表现成
+        「25 秒内端口未就绪」，日志还是空的 —— 极难查。
+        配置是派生文件，删了下次启动会按最新节点+端口重建。
+        """
+        line = self.get(line_id)
+        if line is None:
+            return
+        if old_port and self._core_running_on(line, int(old_port)):
+            return                      # 自家内核还在旧端口上跑，别动它的现场
+        try:
+            p = line.config_path()
+            if p.exists():
+                p.unlink()
+                _audit(f"线路 {line_id} 端口已换，旧配置已作废（{p.name}）")
+        except OSError:
+            pass
 
     def alloc_ports(self, base: int | None = None, *, rng: random.Random | None = None,
                     attempts: int = 240, exclude: set[int] | None = None) -> tuple[int, int]:

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -79,6 +80,20 @@ def _unmark(line_id: str, profile_id: str = "", drop: bool = False) -> None:
 
 
 # --------------------------------------------------------------------------- 起内核
+def _config_port_ok(cfg: Path, port: int) -> bool:
+    """配置里到底有没有监听这个端口？
+
+    sing-box 写 `"listen_port": N`，xray 写 `"port": N`；这里只做文本匹配，
+    不按两套 schema 分别解析 —— 目的只是发现「配置和线路不是同一代」，
+    不必保证语义完全正确（真正的校验有 `sing-box check` / `xray test`）。
+    """
+    try:
+        text = cfg.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return bool(re.search(rf'"(?:listen_)?port"\s*:\s*{int(port)}\b', text))
+
+
 def ensure_core(reg: Registry, line: Line, *, wait: float = 12.0,
                 allow_fetch: bool = True) -> str:
     """保证这条线路的端口在监听。**不测速**，只用已有节点快照。
@@ -94,6 +109,14 @@ def ensure_core(reg: Registry, line: Line, *, wait: float = 12.0,
         raise RuntimeError(f"找不到 {line.engine} 内核，线路 {line.id} 无法启动")
 
     cfg = line.config_path()
+    # 配置里的监听端口和线路对不上 → 这份配置是旧的（端口体检换过号、
+    # 手改过 lines.json、或者从别的机器搬过来），直接作废重建。
+    # 不处理的话内核会去听旧端口，界面只看到「启动超时」，日志还是空的。
+    if cfg.exists() and line.http_port and not _config_port_ok(cfg, line.http_port):
+        try:
+            cfg.unlink()
+        except OSError:
+            pass
     # 订阅在后台更新过、而这份配置还是按旧节点编译的 —— 先重写再用。
     # 不在这里处理的话，「自动更新」就等于只更新了缓存，永远不生效。
     if cfg.exists() and getattr(line, "sub_stale", False):

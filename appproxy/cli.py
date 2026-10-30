@@ -250,12 +250,19 @@ def cmd_build(reg: Registry, a) -> int:
 
 
 def cmd_start(reg: Registry, a) -> int:
+    """起内核。
+
+    刻意走 `pool.ensure_core`，而不是自己判断「配置在不在」再 `coreproc.start`：
+    配置可能是上一代留下的（端口体检换过号、订阅在后台更新过节点），
+    这两件事只有 ensure_core 里的两道闸会处理。命令行和界面走同一条路，
+    才不会出现「界面能起、命令行起不来」这种鬼问题。
+    """
+    from appproxy import pool
+
     line = reg.require(a.id)
-    if not line.config_path().exists():
-        cmd_build(reg, argparse.Namespace(id=line.id))
-    h = coreproc.start(_need_binary(reg, line), line.config_path(), line.http_port)
+    msg = pool.ensure_core(reg, line)
     ok, code, ms = coreproc.probe_via_proxy(line.http_port, settings.DEFAULT_HEALTH_URL)
-    print(f"{OK} 内核 PID={h.pid} 端口={line.http_port} 日志={h.log}")
+    print(f"{OK} {msg}")
     print(f"{OK if ok else FAIL} 链路探测 {code} / {ms}ms")
     return 0 if ok else 1
 

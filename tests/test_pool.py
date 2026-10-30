@@ -350,3 +350,105 @@ def test_heal_backs_off_when_restart_fails(tmp_home, monkeypatch):
     # 退避到期后允许再试
     pool.heal(reg, store, snap=snap, now=pool.HEAL_AFTER + pool.HEAL_BACKOFF[0])
     assert len(tries) == 2
+
+
+# --------------------------------------------------------------------------- 配置与线路是否同一代
+def test_config_port_ok_matches_both_schemas(tmp_home):
+    from pathlib import Path
+    box = tmp_home / "c.json"
+    box.write_text('{"inbounds":[{"listen_port":17111}]}', encoding="utf-8")
+    assert pool._config_port_ok(box, 17111) is True
+    assert pool._config_port_ok(box, 10930) is False      # 前缀相同的号不能误判
+    box.write_text('{"inbounds":[{"port":17111}]}', encoding="utf-8")   # xray 写法
+    assert pool._config_port_ok(box, 17111) is True
+    assert pool._config_port_ok(tmp_home / "nope.json", 17111) is False
+
+
+def test_ensure_core_rebuilds_when_config_port_is_stale(tmp_home, monkeypatch):
+    """配置里还是旧端口时，`ensure_core` 必须重建，而不是拿旧配置去起内核。
+
+    真机症状：端口体检把 10930 换成 17280，配置没重建 → 内核去听 10930 →
+    界面「25 秒内端口未就绪」，日志空白。
+    """
+    from pathlib import Path
+
+    from appproxy.models import Node
+
+    reg = Registry().load()
+    line = Line(id="alpha", name="alpha", http_port=17111, socks_port=17112)
+    reg.upsert(line)
+    reg.save()
+    reg.save_nodes(line, [Node(scheme="vless", address="1.1.1.1", port=443,
+                              secret="s")], {})
+    cfg = line.config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text('{"inbounds":[{"listen_port":10930}]}', encoding="utf-8")
+
+    seen: dict[str, object] = {}
+
+    class _Handle:
+        pid = 4242
+
+    def fake_start(binary, cfg_path, port, wait=12.0):
+        seen["text"] = Path(cfg_path).read_text(encoding="utf-8")
+        seen["port"] = port
+        return _Handle()
+
+    monkeypatch.setattr(pool.coreproc, "port_open", lambda p: False)
+    monkeypatch.setattr(pool.coreproc, "start", fake_start)
+    monkeypatch.setattr(Registry, "binary", lambda self, engine="singbox": Path("sing-box.exe"))
+
+    pool.ensure_core(reg, line)
+    assert seen["port"] == 17111
+    assert "17111" in seen["text"] and "10930" not in seen["text"]
+
+
+# --------------------------------------------------------------------------- 配置与线路是否同一代
+def test_config_port_ok_matches_both_schemas(tmp_home):
+    from pathlib import Path
+    box = tmp_home / "c.json"
+    box.write_text('{"inbounds":[{"listen_port":17111}]}', encoding="utf-8")
+    assert pool._config_port_ok(box, 17111) is True
+    assert pool._config_port_ok(box, 10930) is False      # 前缀相同的号不能误判
+    box.write_text('{"inbounds":[{"port":17111}]}', encoding="utf-8")   # xray 写法
+    assert pool._config_port_ok(box, 17111) is True
+    assert pool._config_port_ok(tmp_home / "nope.json", 17111) is False
+
+
+def test_ensure_core_rebuilds_when_config_port_is_stale(tmp_home, monkeypatch):
+    """配置里还是旧端口时，`ensure_core` 必须重建，而不是拿旧配置去起内核。
+
+    真机症状：端口体检把 10930 换成 17280，配置没重建 → 内核去听 10930 →
+    界面「25 秒内端口未就绪」，日志空白。
+    """
+    from pathlib import Path
+
+    from appproxy.models import Node
+
+    reg = Registry().load()
+    line = Line(id="alpha", name="alpha", http_port=17111, socks_port=17112)
+    reg.upsert(line)
+    reg.save()
+    reg.save_nodes(line, [Node(scheme="vless", address="1.1.1.1", port=443,
+                              secret="s")], {})
+    cfg = line.config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text('{"inbounds":[{"listen_port":10930}]}', encoding="utf-8")
+
+    seen: dict[str, object] = {}
+
+    class _Handle:
+        pid = 4242
+
+    def fake_start(binary, cfg_path, port, wait=12.0):
+        seen["text"] = Path(cfg_path).read_text(encoding="utf-8")
+        seen["port"] = port
+        return _Handle()
+
+    monkeypatch.setattr(pool.coreproc, "port_open", lambda p: False)
+    monkeypatch.setattr(pool.coreproc, "start", fake_start)
+    monkeypatch.setattr(Registry, "binary", lambda self, engine="singbox": Path("sing-box.exe"))
+
+    pool.ensure_core(reg, line)
+    assert seen["port"] == 17111
+    assert "17111" in seen["text"] and "10930" not in seen["text"]

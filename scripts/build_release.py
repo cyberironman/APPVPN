@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import subprocess
 import sys
 import zipfile
@@ -260,6 +261,33 @@ def pack_zip(ver: str) -> Path:
     return out
 
 
+def sync_installer_assets(ver: str) -> None:
+    """把版本号写进安装包的输入文件 —— 单一口径就是 `appproxy.__version__`。
+
+    为什么要有这一步：`installer.iss` 里的 `#define AppVersion` 和
+    `readme-installer.txt` 第一行都是硬编码的。忘了改的表现是：装完显示的版本
+    还是上一版，产物名也对不上（实测 v0.6.5 编出 `AppProxy-v0.6.4-win64-setup.exe`），
+    构建脚本只能报「没看到安装包产物」。手改两处迟早再忘，这里统一刷。
+    """
+    try:
+        text = ISS.read_text(encoding="utf-8-sig")
+        new = re.sub(r'(#define\s+AppVersion\s+")[^"]*(")',
+                     lambda m: m.group(1) + ver + m.group(2), text)
+        if new != text:
+            ISS.write_text(new, encoding="utf-8-sig")   # 保留 BOM，Inno 才认中文
+    except OSError as e:
+        say("      [!] 没写上 installer.iss 的版本：%s" % e)
+
+    readme = ISS.parent / "readme-installer.txt"
+    try:
+        lines = readme.read_text(encoding="utf-8").splitlines()
+        if lines:
+            lines[0] = re.sub(r"v[\d.]+", "v" + ver, lines[0], count=1)
+            readme.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as e:
+        say("      [!] 没写上 readme-installer.txt 的版本：%s" % e)
+
+
 def pack_installer(ver: str) -> Path | None:
     """安装版：交给 Inno Setup 编译。没装 Inno 就跳过，不影响绿色版。"""
     say("")
@@ -273,6 +301,7 @@ def pack_installer(ver: str) -> Path | None:
         say("      [!] 缺 packaging\\installer.iss")
         return None
 
+    sync_installer_assets(ver)
     r = subprocess.run([iscc, str(ISS)], cwd=str(ROOT))
     if r.returncode != 0:
         say("      [x] 安装包编译失败（看上面 ISCC 的输出）")
