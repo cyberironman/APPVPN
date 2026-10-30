@@ -116,6 +116,7 @@ def _excluded_ranges() -> list[tuple[int, int]]:
         out = subprocess.run(
             ["netsh", "int", "ipv4", "show", "excludedportrange", "protocol=tcp"],
             capture_output=True, text=True, timeout=4,
+            encoding="utf-8", errors="replace",
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         ).stdout
         for line in out.splitlines():

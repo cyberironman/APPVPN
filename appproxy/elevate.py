@@ -40,9 +40,15 @@ class ElevateError(RuntimeError):
 
 
 def _schtasks(*args: str, timeout: float = 20.0) -> tuple[int, str]:
-    """调 schtasks，永远不弹窗（CREATE_NO_WINDOW），返回 (返回码, 输出)。"""
+    """调 schtasks，永远不弹窗（CREATE_NO_WINDOW），返回 (返回码, 输出)。
+
+    编码必须显式给 utf-8 + replace：schtasks 的输出是系统代码页（中文机器上是
+    GBK），而打包后的 exe 里 Python 用 UTF-8 模式跑，两边对不上会在读输出的
+    后台线程里抛 UnicodeDecodeError —— 命令本身成功了，界面却刷一屏红字。
+    """
     try:
         r = subprocess.run(["schtasks", *args], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
                            timeout=timeout, creationflags=0x08000000)
     except (OSError, subprocess.TimeoutExpired) as e:
         return 1, f"{type(e).__name__}: {e}"
