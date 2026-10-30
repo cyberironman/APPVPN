@@ -16,10 +16,10 @@
 
 #define AppName        "分应用代理管家"
 #define AppShortName   "AppProxy"
-#define AppVersion     "0.6.5"
+#define AppVersion     "0.6.6"
 #define AppExe         "AppProxy.exe"
 #define AppPublisher   "phoenixonworld"
-#define AppUrl         "https://github.com/phoenixonworld/APPVPN"
+#define AppUrl         "https://github.com/cyberironman/APPVPN"
 
 [Setup]
 ; AppId 决定「升级同一个软件」还是「装两个」—— 一旦发布就不要再改

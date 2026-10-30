@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| 仓库 | https://github.com/phoenixonworld/APPVPN |
+| 仓库 | https://github.com/cyberironman/APPVPN |
 | 当前状态 | **私有（Private）** |
 | 默认分支 | `main` |
-| 下载页 | https://github.com/phoenixonworld/APPVPN/releases/latest |
+| 下载页 | https://github.com/cyberironman/APPVPN/releases/latest |
 | 认证方式 | Git Credential Manager（已登录 `phoenixonworld`，以后不用再输密码） |
 
 > 仓库里**包含 sing-box 内核**（`sing-box.exe` 78 MB + `libcronet.dll` 9 MB）。

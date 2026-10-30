@@ -44,7 +44,7 @@ PORTABLE_TXT = """这是「绿色版」标记文件，别删。
   * 不用了直接删整个文件夹，系统里不留任何东西；
   * 想改回「数据放在别处」，删掉这个文件，程序会用安装版的默认位置。
 
-软件说明：https://github.com/phoenixonworld/APPVPN
+软件说明：https://github.com/cyberironman/APPVPN
 """
 
 README_TXT = """分应用代理管家 v{ver} · 绿色版
@@ -357,7 +357,7 @@ def main() -> int:
 
     say("")
     say("  上传到 GitHub Releases 就能直接发给别人：")
-    say("  https://github.com/phoenixonworld/APPVPN/releases")
+    say("  https://github.com/cyberironman/APPVPN/releases")
     return 0
 
 
