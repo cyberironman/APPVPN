@@ -869,6 +869,8 @@ function viewSettings() {
             ? `<button class="btn btn-ghost btn-sm" data-l="${esc(l.id)}" data-a="stop">停内核</button>`
             : `<button class="btn btn-primary btn-sm" data-l="${esc(l.id)}" data-a="start">起内核</button>`}
           <button class="btn btn-ghost btn-sm" data-l="${esc(l.id)}" data-a="refresh">更新订阅 + 测速</button>
+          <button class="btn btn-ghost btn-sm" data-l="${esc(l.id)}" data-a="pin-fast" title="实测所有节点，把最快的固定为这条线路的出口（IP 从此稳定）">固定最快节点</button>
+          <button class="btn btn-ghost btn-sm" data-l="${esc(l.id)}" data-a="terminal" title="开一个带代理环境变量的终端，codex / git / npm 自动走这条线路">开终端</button>
         </div>
         <div class="line-meta">
           <span>端口 ${l.http_port}${l.socks_port ? " / socks " + l.socks_port : ""}</span>
@@ -1048,6 +1050,9 @@ function bindSettings() {
         if (a === "refresh") {
           await api(`/api/line/${encodeURIComponent(l)}/refresh`, {method:"POST"});
           toast("已开始更新订阅并测速，进度见下方");
+        } else if (a === "pin-fast") {
+          await api(`/api/line/${encodeURIComponent(l)}/pin-fast`, {method:"POST"});
+          toast("已开始测速，测完自动固定最快节点并重启内核，进度见下方");
         } else {
           const r = await api(`/api/line/${encodeURIComponent(l)}/${a}`, {method:"POST"});
           toast(r.message);

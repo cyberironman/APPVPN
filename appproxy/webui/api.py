@@ -407,6 +407,104 @@ def line_refresh(lid: str) -> dict[str, Any]:
     return _run_bg(f"更新 {lid}", work)
 
 
+@app.post("/api/line/{lid}/pin-fast")
+def line_pin_fast(lid: str) -> dict[str, Any]:
+    """测速并把最快的节点固定下来（mode=single）。
+
+    这是「我就要一个固定的出口 IP」场景的一键入口：WhatsApp 这类把登录 IP
+    记进风控的软件，出口天天换就要反复验证。固定之后订阅轮换不再影响出口，
+    代价是固定节点哪天变慢/失效要回来重新点一次。
+    """
+
+    def work(task: dict[str, Any]) -> str:
+        with ACTION_LOCK:
+            reg = _reg()
+            line = reg.get(lid)
+            if line is None:
+                raise RuntimeError("没有这条线路")
+            nodes, _ = reg.load_nodes(line)
+            if not nodes:
+                raise RuntimeError("这条线路还没有节点，先更新订阅")
+            binary = reg.binary(line.engine)
+            if binary is None:
+                raise RuntimeError(f"找不到 {line.engine} 内核，测不了速")
+
+            task["detail"] = f"测速 {len(nodes)} 个节点"
+
+            def tick(done: int, total: int) -> None:
+                task["detail"] = f"测速 {done}/{total}"
+
+            res = latency.measure(nodes, binary, _health(line),
+                                  engine=line.engine, progress=tick)
+            ranked = latency.rank(nodes, res)
+            if not ranked or ranked[0][1] is None:
+                raise RuntimeError("全部节点都不通，固定不了（先检查订阅与网络）")
+            best, ms = ranked[0]
+            line.mode, line.node_key = "single", best.uid
+            reg.upsert(line)
+            reg.save()
+
+            task["detail"] = "重建配置"
+            xrayconf.write(gui_support.build_config(line, nodes, None),
+                           line.config_path())
+            task["detail"] = "重启内核"
+            coreproc.stop(line.config_path())
+            pool.ensure_core(reg, line)
+            return (f"已固定最快节点：{best.label()}（{ms}ms）。"
+                    "出口 IP 从此稳定；节点哪天变慢，回来再点一次即可。")
+
+    return _run_bg(f"固定最快节点 {lid}", work)
+
+
+# 终端程序从好到差依次试：PowerShell 7 → 系统 PowerShell → cmd。
+_TERMINAL_CANDIDATES = (
+    r"C:\Program Files\PowerShell\7\pwsh.exe",
+    r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+    r"C:\Windows\System32\cmd.exe",
+)
+
+
+def _find_terminal() -> str:
+    for p in _TERMINAL_CANDIDATES:
+        if Path(p).is_file():
+            return p
+    raise RuntimeError("找不到 PowerShell / cmd，开不了代理终端")
+
+
+@app.post("/api/line/{lid}/terminal")
+def line_terminal(lid: str) -> dict[str, Any]:
+    """在这条线路上开一个终端窗口。
+
+    整合自 Codex 管家的核心功能：命令行程序（codex / git / npm / pip …）
+    不认 --proxy-server 参数，分流靠环境变量。这里给终端注入
+    HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 指向这条线路的本地端口，
+    终端里跑的命令行工具就自动走这条线 —— 不碰系统代理，关掉窗口即收摊。
+    """
+    with ACTION_LOCK:
+        reg, store = _reg(), _store()
+        line = reg.get(lid)
+        if line is None:
+            raise HTTPException(404, "没有这条线路")
+        exe = _find_terminal()
+        base_id = f"terminal-{line.id}"
+        prof = store.get(base_id)
+        if prof is None:
+            prof = AppProfile(id=store.unique_id(base_id),
+                              name=f"终端·{line.name}", exe=exe, line_id=line.id)
+            store.upsert(prof)
+            store.save()
+        if procwatch.snapshot().alive(prof):
+            return {"ok": True, "id": prof.id,
+                    "message": f"{prof.name} 已经开着（代理 {line.proxy_url()}）"}
+        try:
+            launcher.launch(prof, reg)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, f"{type(e).__name__}: {e}") from e
+        return {"ok": True, "id": prof.id,
+                "message": (f"终端已打开，命令行工具自动走「{line.name}」"
+                            f"（{line.proxy_url()}）；关掉窗口即停。")}
+
+
 # --------------------------------------------------------------------------- 程序库
 def _spawn(base: str, name: str, exe: str, line_id: str, url: str) -> dict[str, Any]:
     """建一个档案 + 图标 + 快捷方式。已存在同名 id 时自动加后缀。"""
