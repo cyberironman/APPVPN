@@ -240,15 +240,20 @@ def profile_start(pid: str, variant: str = "auto") -> dict[str, Any]:
             raise HTTPException(404, "没有这个档案")
         if not prof.exists():
             raise HTTPException(400, f"找不到程序：{prof.exe}")
-        # 判活对准真正会跑的那个程序：网页版档案开客户端时跑的是客户端 exe
+        # 判活对准真正会跑的那个程序：网页版档案开客户端时跑的是客户端 exe。
+        # 客户端没装就跳过「已在运行」短路 —— 网页版窗口开着不代表客户端在跑，
+        # 这时要点的是「去官网装」的提示，不是一句已启动。
         watch_exe = prof.exe
+        skip_alive = False
         if variant == "client" and prof.url and prof.resolved_kind == "chromium":
             from appproxy.profiles import find_client_exe
             found = find_client_exe(prof)
             if found:
                 watch_exe = found
+            else:
+                skip_alive = True
         import dataclasses as _dc
-        if procwatch.snapshot().alive(_dc.replace(prof, exe=watch_exe)):
+        if not skip_alive and procwatch.snapshot().alive(_dc.replace(prof, exe=watch_exe)):
             return {"ok": True, "message": f"{prof.name} 已在运行", "already": True}
         try:
             launcher.launch(prof, reg, variant=variant)

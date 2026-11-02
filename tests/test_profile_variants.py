@@ -125,6 +125,20 @@ def test_api_start_client_missing_returns_400_with_download(env, monkeypatch):
     assert "whatsapp.com/download" in r.json()["detail"]
 
 
+def test_api_start_client_missing_not_blocked_by_web_alive(env, monkeypatch):
+    """网页版窗口开着时点「启动客户端」：要给装机提示，不能误报「已在运行」。"""
+
+    class FakeSnap:
+        def alive(self, prof):
+            return True                      # 就当网页版正开着
+
+    monkeypatch.setattr(profiles, "find_client_exe", lambda p, table=None: "")
+    monkeypatch.setattr(api.procwatch, "snapshot", lambda: FakeSnap())
+    r = env.client.post("/api/profile/whatsapp/start?variant=client")
+    assert r.status_code == 400
+    assert "download" in r.json()["detail"]
+
+
 def test_api_start_web_launches(env, monkeypatch):
     calls: list[tuple] = []
 
