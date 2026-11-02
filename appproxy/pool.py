@@ -24,7 +24,7 @@ from typing import Any
 
 from . import coreproc, procwatch, settings, singconf, subscription, xrayconf
 from .models import Line
-from .profiles import AppProfile, ProfileStore, isolation
+from .profiles import AppProfile, ProfileStore, find_client_exe, isolation
 from .registry import Registry
 
 
@@ -434,6 +434,10 @@ def state(reg: Registry | None = None, store: ProfileStore | None = None) -> dic
             "alive": snap.alive(p),
             "icon": p.icon_path().exists(),
             "url": p.url,
+            "web": bool(p.url) and p.resolved_kind == "chromium",
+            "client_found": (True if not (p.url and p.resolved_kind == "chromium")
+                             else bool(find_client_exe(p))),
+            "client_exe": p.client_exe,
             "data_dir": str(p.data_path()),
             "isolate": p.isolate,
             "iso_mode": iso_eff,

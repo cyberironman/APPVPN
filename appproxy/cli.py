@@ -641,7 +641,9 @@ def cmd_profile_show(reg: Registry, a) -> int:
 def cmd_profile_launch(reg: Registry, a) -> int:
     from appproxy import launcher
     return launcher.main(["--profile", a.id] + (["--dry-run"] if a.dry_run else [])
-                         + (["--no-core"] if a.no_core else []))
+                         + (["--no-core"] if a.no_core else [])
+                         + (["--web"] if getattr(a, "web", False) else [])
+                         + (["--client"] if getattr(a, "client", False) else []))
 
 
 def cmd_profile_icon(reg: Registry, a) -> int:
@@ -707,27 +709,22 @@ def cmd_sysproxy(reg: Registry, a) -> int:
     if a.action == "status":
         st = sysproxy.status()
         print(f"系统代理：{st['text']}")
-        print(f"  备份：{'有（关闭时会还原）' if st['backup'] else '无'}")
+        if st.get("backup"):
+            print("  备份：有旧版接管记录（下次 off 时自动还原原值）")
         for l in reg.lines:
             hit = "  ← 当前" if sysproxy.matches_port(st, l.http_port) else ""
             print(f"  {'✓' if sysproxy.matches_port(st, l.http_port) else ' '} "
                   f"{l.name}（{l.http_port}）{hit}")
         return 0
+    # ★ 2026-11-02 用户硬规定：本产品永不修改系统代理（各软件按档案分流）。
+    #   on / alpha / toggle 一律拒绝；off 只做「还原旧版备份」这一种清理。
     if a.action == "off":
-        print(f"{OK} {sysproxy.describe(sysproxy.disable())}")
+        st = sysproxy.disable()
+        print(f"{OK} {sysproxy.describe(st)}")
         return 0
-    line = reg.require(a.line) if a.line else (reg.lines[0] if reg.lines else None)
-    if line is None:
-        raise SystemExit("没有线路可用")
-    if not coreproc.port_open(line.http_port):
-        print(f"{FAIL} 线路 {line.id} 端口 {line.http_port} 没在监听，先 start 或让托盘拉起来")
-        return 1
-    if a.action == "toggle":
-        st = sysproxy.toggle(line.http_port)
-    else:
-        st = sysproxy.enable(line.http_port)
-    print(f"{OK} {sysproxy.describe(st)}")
-    return 0
+    print(f"{FAIL} {sysproxy.DISABLED_NOTE}")
+    print("    （各软件用「按程序分流 / 进程参数」走代理，不需要系统代理）")
+    return 1
 
 
 def cmd_autostart(reg: Registry, a) -> int:
@@ -1249,6 +1246,8 @@ def main(argv: list[str] | None = None) -> int:
     ppl.add_argument("id")
     ppl.add_argument("--dry-run", action="store_true")
     ppl.add_argument("--no-core", action="store_true")
+    ppl.add_argument("--web", action="store_true", help="强制开网页版")
+    ppl.add_argument("--client", action="store_true", help="强制开桌面客户端")
     ppl.set_defaults(fn=cmd_profile_launch)
 
     ppi = psub.add_parser("icon", help="重做图标（不给 id 就全做）")

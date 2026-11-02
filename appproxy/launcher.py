@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import subprocess
 import sys
@@ -68,7 +69,7 @@ def ensure_core(reg: Registry, line: Line, wait: float = 12.0) -> str:
 
 # --------------------------------------------------------------------------- 主流程
 def launch(profile: profiles.AppProfile, reg: Registry, *, dry_run: bool = False,
-           no_core: bool = False) -> int:
+           no_core: bool = False, variant: str = "auto") -> int:
     line = reg.resolve(profile.line_id)
     if profile.line_id and line is None and not reg.is_following_default(profile.line_id):
         raise RuntimeError(f"档案 {profile.id} 绑定的线路 {profile.line_id} 不存在")
@@ -77,16 +78,20 @@ def launch(profile: profiles.AppProfile, reg: Registry, *, dry_run: bool = False
         # 按需起内核：约 1 秒。这里不做任何测速，慢的东西全在后台。
         log(pool.start_for_profile(reg, profile))
 
-    p = profiles.plan(profile, line)
-    log(f"启动 {profile.id}：{p.command_line()}")
+    p = profiles.plan(profile, line, variant=variant)
+    log(f"启动 {profile.id}（{variant}）：{p.command_line()}")
     log(f"    数据隔离 {p.iso_mode} —— {p.iso_note}")
     if dry_run:
         for k, v in p.env.items():
             log(f"    env {k}={v or '<清空>'}")
         return 0
 
-    if not profile.exists():
-        raise RuntimeError(f"找不到程序：{profile.exe}")
+    if not Path(p.argv[0]).is_file():
+        raise RuntimeError(f"找不到程序：{p.argv[0]}")
+
+    # 探活要对准「真正启动的那个程序」：网页版档案开客户端时，
+    # 跑的是 whatsapp.exe 而不是档案里记的浏览器。
+    watch = dataclasses.replace(profile, exe=p.argv[0])
 
     # 隔离目录必须先建好：程序第一次启动时如果发现目录不存在，
     # 有的会自己建，有的直接报错退出，别赌。
@@ -105,7 +110,7 @@ def launch(profile: profiles.AppProfile, reg: Registry, *, dry_run: bool = False
     # 等程序真的出现在进程表里再退出。
     # 否则「按需回收」可能在程序启动的那两秒里判定"没人用"，把刚起的内核又停掉。
     if line and not no_core:
-        wait_for_process(profile, timeout=20.0)
+        wait_for_process(watch, timeout=20.0)
     return 0
 
 
@@ -128,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--profile", required=True, help="档案 id")
     ap.add_argument("--dry-run", action="store_true", help="只打印命令，不启动")
     ap.add_argument("--no-core", action="store_true", help="不启动内核（内核已手动开着时用）")
+    ap.add_argument("--web", action="store_true", help="强制开网页版（只对配了网址的档案有效）")
+    ap.add_argument("--client", action="store_true", help="强制开桌面客户端（网页版档案会现场找客户端）")
     a = ap.parse_args(argv)
 
     try:
@@ -135,7 +142,9 @@ def main(argv: list[str] | None = None) -> int:
         store = profiles.ProfileStore().load()
         profile = store.require(a.profile)
         reg = Registry().load()
-        return launch(profile, reg, dry_run=a.dry_run, no_core=a.no_core)
+        variant = "client" if a.client else ("web" if a.web else "auto")
+        return launch(profile, reg, dry_run=a.dry_run, no_core=a.no_core,
+                      variant=variant)
     except Exception as e:  # noqa: BLE001
         log(f"[!!] {type(e).__name__}: {e}")
         shout(f"启动失败：\n\n{e}\n\n详细日志：{settings.logs_dir() / 'launcher.log'}")

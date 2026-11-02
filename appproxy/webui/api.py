@@ -224,8 +224,15 @@ class BatchAdd(BaseModel):
 
 
 @app.post("/api/profile/{pid}/start")
-def profile_start(pid: str) -> dict[str, Any]:
-    """启动这个软件：需要代理就先按需拉起它那条线路（约 1 秒，不测速）。"""
+def profile_start(pid: str, variant: str = "auto") -> dict[str, Any]:
+    """启动这个软件：需要代理就先按需拉起它那条线路（约 1 秒，不测速）。
+
+    variant=web/client：同一个档案两种开法 —— 网页版开专属浏览器窗口，
+    客户端开桌面程序（网页版档案会现场找客户端，没装就报官网地址）。
+    """
+    variant = (variant or "auto").lower()
+    if variant not in ("auto", "web", "client"):
+        raise HTTPException(400, "variant 只能是 auto / web / client")
     with ACTION_LOCK:
         store, reg = _store(), _reg()
         prof = store.get(pid)
@@ -233,13 +240,26 @@ def profile_start(pid: str) -> dict[str, Any]:
             raise HTTPException(404, "没有这个档案")
         if not prof.exists():
             raise HTTPException(400, f"找不到程序：{prof.exe}")
-        if procwatch.snapshot().alive(prof):
+        # 判活对准真正会跑的那个程序：网页版档案开客户端时跑的是客户端 exe
+        watch_exe = prof.exe
+        if variant == "client" and prof.url and prof.resolved_kind == "chromium":
+            from appproxy.profiles import find_client_exe
+            found = find_client_exe(prof)
+            if found:
+                watch_exe = found
+        import dataclasses as _dc
+        if procwatch.snapshot().alive(_dc.replace(prof, exe=watch_exe)):
             return {"ok": True, "message": f"{prof.name} 已在运行", "already": True}
         try:
-            launcher.launch(prof, reg)
+            launcher.launch(prof, reg, variant=variant)
+        except LookupError as e:  # noqa: BLE001  客户端没装 —— 话要说全
+            raise HTTPException(400, str(e)) from e
+        except ValueError as e:  # noqa: BLE001  比如没配网址却要点网页版
+            raise HTTPException(400, str(e)) from e
         except Exception as e:  # noqa: BLE001
             raise HTTPException(500, f"{type(e).__name__}: {e}") from e
-        return {"ok": True, "message": f"{prof.name} 已启动"}
+        what = "网页版" if variant == "web" else ("客户端" if variant == "client" else "")
+        return {"ok": True, "message": f"{prof.name} {what}已启动".replace("  ", " ")}
 
 
 @app.post("/api/profile/{pid}/stop")
@@ -813,17 +833,16 @@ class SysProxyBody(BaseModel):
 @app.post("/api/settings/sysproxy")
 def set_sysproxy(body: SysProxyBody) -> dict[str, Any]:
     with ACTION_LOCK:
+        # ★ 2026-11-02 用户硬规定：本产品永不修改系统代理（各软件按档案分流）。
+        #   off 只做「还原旧版备份」这一种清理；on 一律拒绝。
         if body.mode != "on":
             st = sysproxy.disable()
-            return {"ok": True, "message": f"系统代理已关闭（{sysproxy.describe(st)}）"}
-        reg = _reg()
-        line = reg.get(body.line_id) if body.line_id else None
-        if line is None:
-            raise HTTPException(400, "先选一条线路")
-        if not coreproc.port_open(line.http_port):
-            pool.ensure_core(reg, line)
-        st = sysproxy.enable(line.http_port)
-        return {"ok": True, "message": f"系统代理已指向 {line.name}（{line.http_port}）",
+            ok = bool(st.get("restored"))
+            return {"ok": ok,
+                    "message": sysproxy.describe(st)
+                    + ("（已还原旧版接管前的原值）" if ok else "")}
+        st = sysproxy.enable(0)
+        return {"ok": False, "message": sysproxy.describe(st),
                 "state": sysproxy.describe(st)}
 
 

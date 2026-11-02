@@ -109,6 +109,42 @@ def detect_kind(exe: str | Path) -> str:
     return "chromium" if name in CHROMIUM_NAMES else "generic"
 
 
+# --------------------------------------------------------------------------- 桌面客户端
+# 网页版档案（exe=浏览器 + url）也允许用桌面客户端启动：客户端没装就现场搜，
+# 搜到的结果缓存一小会儿 —— 快照每次刷新都会问，不能每次都翻索引。
+_CLIENT_CACHE: dict[str, tuple[float, str]] = {}
+_CLIENT_TTL = 60.0
+
+
+def client_cache_clear() -> None:
+    _CLIENT_CACHE.clear()
+
+
+def find_client_exe(profile: AppProfile, table: dict[str, list[str]] | None = None) -> str:
+    """网页版档案对应的桌面客户端路径；本机没装就返回空串。
+
+    顺序：档案里记下的路径（用户装好后第一次启动时固化）→
+    清单里登记的 exe 名现场搜。搜结果缓存 60 秒。
+    """
+    now = time.time()
+    hit = _CLIENT_CACHE.get(profile.id)
+    if hit and now - hit[0] < _CLIENT_TTL:
+        return hit[1]
+
+    path = ""
+    if profile.client_exe and Path(profile.client_exe).is_file():
+        path = profile.client_exe
+    else:
+        from . import appdb, appfind  # 延迟导入：profiles 是底层模块
+        entry = appdb.get(profile.id) or {}
+        names = [n for n in (list(entry.get("exe") or []) + [f"{profile.name}.exe"]) if n]
+        found = appfind.locate_any(names, table) if names else None
+        if found and appfind.usable(found):
+            path = found
+    _CLIENT_CACHE[profile.id] = (now, path)
+    return path
+
+
 def slug(text: str) -> str:
     """档案 id 只允许安全字符，避免路径里出现中文标点或空格。"""
     s = re.sub(r"[^0-9A-Za-z_.-]+", "-", (text or "").strip()).strip("-_. ")
@@ -130,6 +166,7 @@ class AppProfile:
     created: int = 0
     isolate: str = "auto"        # auto / full / off —— 多开时怎么隔离用户数据
     preset: bool = False         # 首次启动自动建的（用户删了就不再长回来）
+    client_exe: str = ""         # 网页版档案对应的桌面客户端路径（找不到就现场搜）
 
     def __post_init__(self) -> None:
         self.id = slug(self.id)
@@ -195,23 +232,57 @@ class LaunchPlan:
         return " ".join(f'"{a}"' if " " in a else a for a in self.argv)
 
 
-def plan(profile: AppProfile, line: Line | None = None) -> LaunchPlan:
+def plan(profile: AppProfile, line: Line | None = None,
+         variant: str = "auto") -> LaunchPlan:
     """把「档案 + 线路」翻译成一条启动命令。
 
     line 为 None 或线路没有端口 -> 直连档案（浏览器显式 --no-proxy-server，
     免得上一次留下的系统代理又把它带走）。
 
+    variant:
+        auto    按档案本来面目启动（网页版开浏览器，桌面版开程序）
+        web     强制开网页版（必须配了 url；档案 exe 不是浏览器时现场找）
+        client  强制开桌面客户端（网页版档案会现场搜客户端，没装就 LookupError）
+
     数据隔离在这里落地：把程序自己的用户数据指到 `apps/<id>/data`，
     这样同一个软件的两个档案才真的是两个独立实例。
     """
+    variant = (variant or "auto").lower()
+    if variant not in ("auto", "web", "client"):
+        raise ValueError(f"variant 只能是 auto / web / client：{variant}")
+
     exe = str(profile.exe_path())
+    kind = profile.resolved_kind
+    if variant == "web":
+        if not profile.url:
+            raise ValueError(f"「{profile.name}」没有配置网页版地址，开不了网页版")
+        if kind != "chromium":
+            from . import appfind
+            br = appfind.browser()
+            if not br:
+                raise LookupError("本机没有可用的浏览器，开不了网页版")
+            exe, kind = br, "chromium"
+    elif variant == "client" and profile.url and kind == "chromium":
+        # 网页版档案想开客户端：现场找，没装就明说（带官网地址）。
+        client = find_client_exe(profile)
+        if not client:
+            from . import appdb
+            entry = appdb.get(profile.id) or {}
+            dl = entry.get("download") or ""
+            raise LookupError(
+                f"没找到「{profile.name}」的电脑客户端。"
+                + (f"可以先去官网安装：{dl}。" if dl else "")
+                + "（「启动网页版」不受影响）")
+        exe, kind = client, detect_kind(client)
+
     port = int(line.http_port or 0) if line else 0
     proxy = f"http://127.0.0.1:{port}" if port else ""
-    kind = profile.resolved_kind
     env: dict[str, str] = {}
     argv = [exe]
 
-    iso = isolation(profile.exe, kind)
+    # 隔离按「真正会跑的那个程序」算：网页版档案开客户端时，
+    # 要看客户端 exe 认不认数据目录参数，不是看浏览器。
+    iso = isolation(exe, kind)
     data = profile.data_path()
     iso_mode, iso_note = "none", iso["note"]
 
@@ -245,10 +316,11 @@ def plan(profile: AppProfile, line: Line | None = None) -> LaunchPlan:
             env[key] = proxy
 
     argv.extend(profile.args)
-    if profile.url:
+    if profile.url and variant != "client":
+        # 网址只给浏览器：开客户端时把网页地址塞给它只会弹个没用的窗口
         argv.append(profile.url)
 
-    return LaunchPlan(argv=argv, env=env, cwd=str(profile.exe_path().parent),
+    return LaunchPlan(argv=argv, env=env, cwd=str(Path(exe).parent),
                       proxy=proxy, kind=kind,
                       iso_mode=iso_mode, iso_note=iso_note)
 

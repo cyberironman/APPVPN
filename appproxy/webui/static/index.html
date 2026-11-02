@@ -369,9 +369,20 @@ function renderMain() {
         <p>${esc(p.line_name)}${p.proxy ? " · " + esc(p.proxy) : " · 不经过代理"}</p>
       </div>
       <div class="d-actions">
+        ${p.web ? `
+        <button class="btn btn-primary" id="act-start" ${p.alive || isBusy ? "disabled" : ""}
+                title="在专属浏览器窗口里打开网页版，数据独立、走绑定的线路">
+          ${isBusy ? '<span class="spin"></span>连接中…' : (p.alive ? "已启动" : "启动网页版")}
+        </button>
+        <button class="btn btn-ghost" id="act-start-client" ${p.alive || isBusy ? "disabled" : ""}
+                title="${p.client_found === false ? "本机还没装桌面客户端，点按后会告诉你官网地址" : "启动安装好的桌面客户端，同样走绑定的线路、用独立数据"}">
+          ${p.client_found === false ? "启动客户端（未安装）" : "启动客户端"}
+        </button>
+        ` : `
         <button class="btn btn-primary" id="act-start" ${p.alive || isBusy ? "disabled" : ""}>
           ${isBusy ? '<span class="spin"></span>连接中…' : (p.alive ? "已启动" : "启动")}
         </button>
+        `}
         <button class="btn btn-ghost" id="act-stop" ${!p.alive || isStop ? "disabled" : ""}>
           ${isStop ? "关闭中…" : "关闭"}
         </button>
@@ -447,7 +458,9 @@ function badgeFor(p) {
 
 function bindDetail(p) {
   const start = $("#act-start"), stop = $("#act-stop");
-  if (start) start.onclick = () => actStart(p.id);
+  if (start) start.onclick = () => actStart(p.id, p.web ? "web" : "auto");
+  const startClient = $("#act-start-client");
+  if (startClient) startClient.onclick = () => actStart(p.id, "client");
   if (stop) stop.onclick = () => actStop(p.id);
   const sl = $("#sel-line");
   if (sl) sl.onchange = () => actLine(p.id, sl.value);
@@ -481,7 +494,12 @@ function paintDetail() {
   if (start) {
     start.disabled = p.alive || !!S.busy["start:" + p.id];
     start.innerHTML = S.busy["start:" + p.id] ? '<span class="spin"></span>连接中…'
-                      : (p.alive ? "已启动" : "启动");
+                      : (p.alive ? "已启动" : (p.web ? "启动网页版" : "启动"));
+  }
+  const startClient = $("#act-start-client");
+  if (startClient) {
+    startClient.disabled = p.alive || !!S.busy["start:" + p.id];
+    startClient.textContent = p.client_found === false ? "启动客户端（未安装）" : "启动客户端";
   }
   if (stop) {
     stop.disabled = !p.alive || !!S.busy["stop:" + p.id];
@@ -490,12 +508,13 @@ function paintDetail() {
 }
 
 /* ---------------- 详情动作 ---------------- */
-async function actStart(id) {
+async function actStart(id, variant) {
   busy("start:" + id, true);
   try {
-    const r = await api(`/api/profile/${encodeURIComponent(id)}/start`, {method:"POST"});
+    const q = variant && variant !== "auto" ? `?variant=${encodeURIComponent(variant)}` : "";
+    const r = await api(`/api/profile/${encodeURIComponent(id)}/start${q}`, {method:"POST"});
     toast(r.message || "已启动");
-  } catch (e) { toast("启动失败：" + e.message, 5000); }
+  } catch (e) { toast("启动失败：" + e.message, 7000); }
   finally { busy("start:" + id, false); await refresh(true); }
 }
 async function actStop(id) {
@@ -951,19 +970,13 @@ function viewSettings() {
 
     <div class="sec-title">系统代理</div>
     <div class="rows">
-      <div class="row"><label>当前</label><div class="val">
-        <span class="badge ${sp.on ? "warn" : "off"}"><i></i>${esc(sp.detail || "未知")}</span>
-      </div></div>
-      <div class="row"><label>接管</label><div class="val" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="sp-line">
-          ${lines.map(l => `<option value="${esc(l.id)}">${esc(l.name)} · ${l.http_port}</option>`).join("")}
-        </select>
-        <button class="btn btn-ghost btn-sm" id="sp-on">指向这条线路</button>
-        <button class="btn btn-ghost btn-sm" id="sp-off">关闭并还原</button>
+      <div class="row"><label>策略</label><div class="val">
+        <span class="badge off"><i></i>永不修改（2026-11-02 起）</span>
       </div></div>
       <div class="row" style="color:var(--muted);font-size:11.5px;display:block;line-height:1.75">
-        只改当前用户（HKCU），不需要管理员权限。开启前会备份原设置，关闭时原样还原，
-        所以不会和别的代理软件打架。本产品的正常用法是<b>不开系统代理</b>：让每个软件按档案走。
+        本产品<b>不提供系统代理开关</b>：所有软件都走「按程序分流 / 进程参数」，用我们自己的
+        管家软件管，不碰 Windows 系统代理。系统代理是给其他程序用的，我们只读不改。
+        ${sp.on ? `当前它由<b>其他程序</b>管理（${esc(sp.detail || "")}），与我们无关。` : "当前系统代理处于关闭状态。"}
       </div>
     </div>
 
@@ -1128,20 +1141,7 @@ function bindSettings() {
     impBtn.disabled = false; impBtn.textContent = "导入配置…";
     await loadSettings();
   };
-  const on = $("#sp-on"), off = $("#sp-off");
-  if (on) on.onclick = async () => {
-    const lid = $("#sp-line")?.value || "";
-    try { const r = await api("/api/settings/sysproxy", {method:"POST",
-      body: JSON.stringify({mode:"on", line_id: lid})}); toast(r.message); }
-    catch (e) { toast(e.message, 5000); }
-    await refresh(true); await loadSettings();
-  };
-  if (off) off.onclick = async () => {
-    try { const r = await api("/api/settings/sysproxy", {method:"POST",
-      body: JSON.stringify({mode:"off"})}); toast(r.message); }
-    catch (e) { toast(e.message, 5000); }
-    await refresh(true); await loadSettings();
-  };
+  // 系统代理开关已移除（永不修改系统代理，2026-11-02）
   const tunBtn = async (b, path) => {
     if (!b) return;
     const old = b.textContent;
