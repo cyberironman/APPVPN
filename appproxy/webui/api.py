@@ -171,6 +171,22 @@ def profile_icon(pid: str) -> Response:
                     headers={"Cache-Control": "max-age=30"})
 
 
+# --------------------------------------------------------------------------- 语言
+@app.get("/api/lang")
+def get_lang() -> dict[str, str]:
+    return {"lang": settings.ui_lang()}
+
+
+@app.post("/api/lang")
+def set_lang(b: dict[str, Any]) -> dict[str, Any]:
+    """WebUI 一键切换语言时回写；托盘菜单下次右键就跟着变。"""
+    try:
+        settings.set_ui_lang(str(b.get("lang") or ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True, "lang": settings.ui_lang()}
+
+
 # --------------------------------------------------------------------------- 状态
 @app.get("/api/state")
 def state() -> dict[str, Any]:

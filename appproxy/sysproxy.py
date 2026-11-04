@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """Windows 系统代理开关（注册表 + 立即生效广播）。
 
-为什么要它：
-    有些程序既不吃 `--proxy-server` 参数，也不读 `HTTP_PROXY` 环境变量
-    （大量国产客户端）。对这种程序，唯一可行的「引导」就是临时把系统代理指向
-    某条线路的本地端口。
+★ 2026-11-02 用户硬规定：**本产品永不修改系统代理。**
+    所有软件都走「按程序分流 / 进程参数」——用我们自己的小软件管，不碰系统代理。
+    因此 enable()/toggle() 默认直接拒绝（不写注册表、不备份）；
+    唯一放行的写操作是「还原历史备份」——那是在清理本产品旧版本留下的残留，
+    属于修复而不是接管。
+    极端情况下确需临时启用，可设环境变量 APPPROXY_ALLOW_SYSPROXY=1（几乎不该用）。
 
-设计原则：
+历史设计（备份还原等）保留，供还原残留使用：
     * 只动当前用户（HKCU），不需要管理员权限；
     * 开启前**先备份**原来的设置，关闭时**还原**，不把别人的代理配置弄丢；
     * 三项注册表值都要改，且必须发 InternetSetOption 广播，否则要等程序重启才生效。
@@ -22,11 +24,21 @@ from . import settings
 
 REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
 BACKUP_NAME = "sysproxy-backup.json"
+ALLOW_ENV = "APPPROXY_ALLOW_SYSPROXY"
+
+DISABLED_NOTE = "已禁用：本产品永不修改系统代理（各软件按档案分流，无需接管）"
+
 
 # 接管系统代理时必须跳过本机地址。
 # 不写这条，连本产品自己的界面（127.0.0.1 上的本地服务）都会被送进代理，
 # 代理端口一时没起来就会白屏 —— 自己把自己锁在门外。
 BYPASS_LOCAL = "localhost;127.*;10.*;172.16.*;192.168.*;<local>"
+
+
+# --------------------------------------------------------------------------- 总闸门
+def allowed() -> bool:
+    """除非显式设 APPPROXY_ALLOW_SYSPROXY=1，一律禁止修改系统代理。"""
+    return os.environ.get(ALLOW_ENV, "").strip() == "1"
 
 
 # --------------------------------------------------------------------------- 纯计算
@@ -37,6 +49,8 @@ def server_for(port: int) -> str:
 
 def describe(state: dict[str, Any]) -> str:
     """给人看的一句话。"""
+    if state.get("disabled"):
+        return DISABLED_NOTE
     if state.get("enable") and state.get("server"):
         return f"已开启 → {state['server']}"
     return "已关闭"
@@ -122,7 +136,14 @@ def drop_backup() -> None:
 
 # --------------------------------------------------------------------------- 开关
 def enable(port: int) -> dict[str, Any]:
-    """把系统代理指向某条线路的本地端口。"""
+    """把系统代理指向某条线路的本地端口。
+
+    ★ 2026-11-02 起默认拒绝：用户硬规定所有代理软件永不修改系统代理。
+    """
+    if not allowed():
+        st = read()
+        st["disabled"] = True
+        return st
     save_backup(read())
     server = server_for(port)
     _write(True, server, BYPASS_LOCAL)
@@ -131,13 +152,26 @@ def enable(port: int) -> dict[str, Any]:
 
 
 def disable(restore: bool = True) -> dict[str, Any]:
-    """关闭系统代理；有备份就还原成接管前的样子（含忽略列表）。"""
+    """关闭系统代理；有备份就还原成接管前的样子（含忽略列表）。
+
+    ★ 未授权时只做一件事：如果存在本产品旧版本留下的备份，就还原它（清理残留）；
+      否则一个字节都不写。
+    """
     backup = load_backup() if restore else None
-    if backup:
+    if backup and not allowed():
+        # 历史残留清理：把旧版本接管前备份的原值放回去，然后删掉备份
         _write(bool(backup.get("enable", False)), backup.get("server") or "",
                backup.get("override", ""))
         drop_backup()
-    else:
+        notify_system()
+        st = read()
+        st["restored"] = True
+        return st
+    if backup and allowed():
+        _write(bool(backup.get("enable", False)), backup.get("server") or "",
+               backup.get("override", ""))
+        drop_backup()
+    elif allowed():
         _write(False)
     notify_system()
     return read()
@@ -155,6 +189,7 @@ def status() -> dict[str, Any]:
     state = read()
     state["text"] = describe(state)
     state["backup"] = bool(load_backup())
+    state["allowed"] = allowed()
     return state
 
 

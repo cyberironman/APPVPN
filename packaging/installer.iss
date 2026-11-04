@@ -16,7 +16,7 @@
 
 #define AppName        "分应用代理管家"
 #define AppShortName   "AppProxy"
-#define AppVersion     "0.6.7"
+#define AppVersion     "0.7.0"
 #define AppExe         "AppProxy.exe"
 #define AppPublisher   "phoenixonworld"
 #define AppUrl         "https://github.com/cyberironman/APPVPN"

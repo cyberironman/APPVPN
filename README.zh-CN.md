@@ -1,0 +1,518 @@
+# APPVPN · 分应用代理管家
+
+> **语言 / Language**：[English](README.md) ｜ 简体中文（当前）
+
+Windows per-app proxy manager with independent routing for multiple Chrome instances.
+
+**把「全机代理」拆成「按程序代理」。**
+
+同一个软件可以开多个图标、各走不同线路，互不干扰；线路只在它对应的那个程序启动时才起来，程序关掉就自动退场。Windows 桌面工具，Python + sing-box。
+
+> 版本 0.6.4 ｜ 平台 Windows 10 / 11 ｜ 免费、无广告、不收集数据
+>
+> **下载就能用**，两种形态任选，都**不需要装 Python、不需要装依赖、不需要跑任何脚本**：
+>
+> | 形态 | 文件 | 怎么用 |
+> |---|---|---|
+> | **安装版**（推荐给普通用户） | `AppProxy-v0.6.4-win64-setup.exe` | 双击 → 下一步 → **自己选安装目录** → 完成 |
+> | **绿色版**（放 U 盘、拷着走） | `AppProxy-v0.6.4-win64.zip` | 解压到任意位置 → 双击 `AppProxy.exe` |
+>
+> 到 [Releases](../../releases) 下载。少什么运行库，软件会自己检查出来并给你一键安装的按钮。
+
+![主界面](docs/主界面.png)
+
+---
+
+## 目录
+
+- [它解决什么问题](#它解决什么问题)
+- [三个核心概念](#三个核心概念)
+- [功能一览](#功能一览)
+- [快速开始](#快速开始)
+- [日常怎么用](#日常怎么用)
+- [技术架构](#技术架构)
+- [关键设计取舍](#关键设计取舍)
+- [隐私与安全](#隐私与安全)
+- [目录结构](#目录结构)
+- [命令行速查](#命令行速查)
+- [测试](#测试)
+- [已知限制](#已知限制)
+- [第三方组件与许可](#第三方组件与许可)
+- [版权与许可](#版权与许可)
+
+---
+
+## 它解决什么问题
+
+| 场景 | v2rayN / Clash 这类全局软件 | 本软件 |
+|---|---|---|
+| 谁走代理 | 全机器（系统代理或虚拟网卡） | 你指定的那个程序，甚至只是它的一个窗口 |
+| 同一个软件多开 | 做不到（一个进程一套设置） | 一个「软件 × 一条线路」一个图标，可同时开多个 |
+| 换线路 | 全局切换，影响所有软件 | 只影响绑定了这条线路的那个图标 |
+| 内核 | 绑定具体客户端 | 可插拔：sing-box（主）/ xray（兼容旧线路） |
+| 平时待机 | 内核常驻，一直占内存和连接 | 没有程序在用时，一个内核都不起 |
+
+典型用法：Chrome 开着三个窗口，一个查境外资料、一个刷国内站点直连、一个跑后台抓取，三个窗口各走各的线路，互不影响，也不会互相拖慢。
+
+![同软件多代理多图标](docs/图标预览.png)
+
+---
+
+## 三个核心概念
+
+| 概念 | 是什么 | 存在哪 |
+|---|---|---|
+| **线路（Line）** | 一条订阅或一个本地代理端口 + 一对本地端口（HTTP/SOCKS）+ 一个内核进程 | `lines.json` |
+| **档案（Profile）** | 「一个程序 × 一条线路」的组合：要启动哪个 exe、带什么参数、用哪个数据目录、配哪个图标 | `profiles.json` |
+| **内核池（Pool）** | 按需启停的内核登记表。有程序在用就起，没人用就回收 | `pool.json` |
+
+**开关的对象是「软件」，不是「线路」。** 点「启动」只拉起这个软件绑定的那一条线路（实测约 1 秒），不测速、不预热、不动别的线路。直接关掉程序窗口，后台 5 秒内发现没人再用这条线路，内核自己退出。
+
+---
+
+## 功能一览
+
+**代理能力**
+- 订阅解析：vless / vmess / trojan / shadowsocks，支持 ws / grpc / h2 / httpupgrade / xhttp、TLS / REALITY
+- 自动择优：`urltest` 定时测速，也可以锁定某一节点
+- **订阅自动更新**：托盘后台按周期（默认 12 小时）拉订阅，**只换节点、不测速、不重启内核**，
+  正在用的连接不会被打断；拉到新节点标「重启内核生效」，下次内核重启或自愈拉起时自动切过去。
+  失败按 5 分 → 15 分 → 45 分 → 2 小时 → 6 小时退避。面板直接显示
+  「上次更新 3 小时前 · 每 12 小时，11 小时后自动更新」或「更新失败（连续 2 次）：HTTP 502」。
+- 首次建配置时先实测节点可用性，只用通的节点（避免开局选到死节点）
+- 批量测速、健康检查、单节点连通性探测
+
+**分应用**
+- **开箱就有**：第一次启动，左侧直接摆好 Telegram / WhatsApp / Messenger / Facebook /
+  Instagram / X / YouTube 七条 —— 不用对着空列表发呆，也不用自己去几百个程序里找。
+  **不带软件本体**：本机装了桌面版就指向它，没装就给一个网页版入口（专属浏览器档案，
+  点开直达该网站，跟平时那个浏览器完全隔离）。
+- **跟着默认线路走**：这七条绑的是「默认线路」而不是某条具体线路 —— 你导入订阅之后
+  它们自动挂上，不用回来一个个改；还没导入时左侧那行显示琥珀色的「待选线路」。
+- **删了就不长回来**：你亲手删掉的预置条目会被记下来，以后升级也不会自作主张长回来；
+  想找回，到设置页点「把缺的补回来」。
+- **常用软件一键添加**：内置 73 条清单（Telegram / WhatsApp / Messenger / Discord / Slack /
+  Facebook / Instagram / X / YouTube / Netflix / Spotify / ChatGPT / Claude / Notion / Steam …），
+  本机装了的一键建档，没装的给官网下载入口。
+  **不带软件本体**：只给两样东西 —— 桌面版程序的快捷方式，或者网页版的专属浏览器图标。
+- 桌面版没装、又只想先能用：点「网页版」，给你一个独立的浏览器档案
+  （自己的 `--user-data-dir`，跟平时那个浏览器完全隔离），点开直达该网站。
+- 从已安装程序里挑（开始菜单扫描，本机 181 个程序约 1.9 秒）；绿色版 / 商店版另有
+  注册表 + 常见安装根浅扫兜底，商店版会被识别出来并提示装官网版（它不接受代理参数）。
+- 浏览器走 `--user-data-dir` + `--proxy-server`，其余程序注入 `HTTP_PROXY` / `HTTPS_PROXY`
+- **同软件多开·全面隔离**：每个档案一份独立用户数据（`apps\<档案>\data`），
+  代价是磁盘多一份（Chrome 一个档案几百 MB 起），换来的是真的互不干扰 ——
+  可同时登录两个账号、删掉一个不碰另一个。按程序各自支持的写法落地：
+  Chromium / Electron 系用 `--user-data-dir`，Telegram 用 `-workdir`，
+  Firefox / Thunderbird 用 `-profile` + `-no-remote`；**表里没有的程序不硬塞参数**，
+  界面上直接说「这个程序没法真多开，多个档案会共用配置」，另可选「强制隔离」
+  （重定向 APPDATA / LOCALAPPDATA，尽力而为、不保证生效）。
+- 自动生成带角标的图标（大字 = 软件名首字，右下角圆标 = 线路）与桌面快捷方式
+
+**界面**
+WeChat 式主界面：左侧软件列表、右侧详情，设置也在主界面里，不堆在右键菜单。
+
+| 托盘 | 设置页 |
+|---|---|
+| ![托盘菜单](docs/托盘菜单.png) | ![设置页](docs/设置页.png) |
+
+**新用户接线**
+一条线路都没有时，主界面不给空白，直接问「你的代理在哪」：
+
+![引导页](docs/引导页.png)
+
+三条路都落到同一条「线路」上，之后所有功能走同一份代码：
+
+| 选项 | 适用 |
+|---|---|
+| 订阅链接 | 机场 / 自建，最常见 |
+| 节点分享链接 | 只有一个节点（`vless://` `vmess://` `trojan://` `ss://`） |
+| 本地端口 | 机器上已经跑着 v2rayN / Clash，只填端口 —— 会先探活，没在监听就直接说「先把你的代理客户端打开」 |
+
+**稳定性**
+- **端口随机分配**：每条线路的本地端口在 `15002–19998` 里随机取一对（http / socks），
+  避开系统保留段（Hyper-V / WSL 排掉的）和各种代理工具的祖传段（1080、7890、10800–10999）。
+  以前是所有人从 10840 起递增，撞车就是「内核起不来、那个软件没网」。
+  软件自己的单实例锁、控制口、界面服务端口同样随机（也在这段里），
+  不再是固定的 10896 / 10897 / 1443 —— 那几个号被别的程序占掉时，
+  用户看到的是「双击没反应」和「窗口打不开」，跟端口冲突完全联系不起来。
+
+  **下限 15002 不是随便定的**：本机 Windows 动态端口段被调成了 `1024–15000`
+  （`netsh int ipv4 show dynamicport tcp` 实测：启动 1024、端口数 13977）。
+  出站连接会从这一段里随机取本地端口，listen 端口落进去迟早撞
+  `bind: address already in use`。所以三个管家一律**只在该段之上**取号。
+
+  **本机三个代理项目的端口段（改一处必须同步另两处）**：
+
+  | 程序 | 端口段 |
+  |---|---|
+  | 分应用代理管家 AppProxy（本程序） | 15002 – 19998 |
+  | 分资料代理 Chrome 管家 | 20000 – 39998 |
+  | 分应用代理 Codex 管家 | 40000 – 49148 |
+
+  三段首尾相接、互不重叠，全部落在「动态段之上、49152 之下」的安全区。
+  任意时刻想看实际用的号、有没有撞车，跑
+  `python D:\WorkBuddyData\scripts\proxy_ports_hygiene.py`。
+- **内核掉线自愈**：内核半路挂掉时自动拉回来。判定刻意做慢 —— 先看进程在不在
+  （进程在说明只是还在启动），**连续 48 秒**都不在也不通才动手；起不来按
+  60 → 120 → 240 → 300 秒退避，不会每分钟硬撞一次拖慢整机。
+
+**排障与搬家**
+- **诊断包**：设置页一个按钮（或 `AppProxy.exe diag`）把 `doctor` 报告、线路/档案快照、
+  端口变更流水、最近日志、编译好的内核配置打成一个 zip。**订阅地址只留主机、
+  uuid / 密码 / reality 密钥全部打码**，生成后还会自检一遍再交给你 —— 可以直接贴到
+  issue，不用自己先做遮挡。
+- **配置导入导出**：`export [--with-sub]` / `import <文件>`。只带线路定义与应用档案，
+  **端口一律不导出**（换台机器重新随机分），节点缓存、内核登记、系统代理备份这些
+  本机痕迹全部丢掉。换电脑不用整目录搬。
+
+**系统级开关**
+- 系统代理接管：改 `HKCU` 注册表 + 广播，**接管前备份、关闭时原样还原**（不需要管理员）
+- 开机自启：只往「启动」文件夹放一个快捷方式，不写计划任务
+- TUN 虚拟网卡接管（高级，默认关，见下）
+
+**TUN 兜底（高级选项）**
+给「不认代理参数」的程序用（游戏、部分 Electron 客户端、后台更新器）。装一块虚拟网卡先把整机流量接住，再按进程名分流。要一次管理员授权，之后不再弹。
+
+![TUN 在哪里点](docs/TUN在哪里点.png)
+
+---
+
+## 快速开始
+
+### 方式一：安装版（推荐）
+
+1. 到 [Releases](../../releases) 下载 `AppProxy-v<版本>-win64-setup.exe`
+2. 双击运行，一路「下一步」——**安装目录自己选**，想装 D 盘就装 D 盘
+3. 装完自动出现在开始菜单和桌面，从控制面板/设置里可以正常卸载
+
+数据默认就放在安装目录里（`<安装目录>\AppProxyData\`），**不再多问一遍**。
+想放别的盘，装完在软件「设置 → 数据目录」里改，现有配置会自动复制过去。
+
+默认装在当前用户目录，**全程不弹管理员授权**；想装到 `Program Files` 给全机器用，
+在向导第一页选「为所有用户安装」即可。
+
+卸载时会问一句「要不要同时删掉配置和日志」，默认**不删** —— 重装能接着用。
+
+### 方式二：绿色版（便携）
+
+1. 到 [Releases](../../releases) 下载 `AppProxy-v<版本>-win64.zip`
+2. 解压到任意位置（本地盘、U 盘、移动硬盘都行）
+3. 双击 `AppProxy.exe`
+
+绿色版带 `portable.txt` 标记，数据写在同目录的 `AppProxyData\` 里。所以：
+
+- 整个文件夹**搬到哪都能用**，换盘符、换电脑、拷 U 盘，订阅和配置都跟着走
+- 不用了**直接删文件夹**，系统里不留任何东西
+- 唯一依赖是 Windows 10/11 本身
+
+第一次双击会直接弹出接线页 —— 填订阅地址，或者选一个你已经在用的客户端的本地端口。
+
+### 缺运行库怎么办
+
+软件启动时会自己体检。主界面「设置」页最下面有**运行环境**一节：缺什么列什么，每条都带一个按钮。
+
+- 缺 VC++ 运行库 → 点一下自动下载微软官方安装包并打开安装向导
+- 缺 TUN 驱动 → 点一下自动补进内核目录（只影响虚拟网卡模式）
+- 缺内核 / 目录没权限 → 直接告诉你该怎么处理，不用去翻日志
+
+命令行也能查：`AppProxy.exe doctor`（加 `--fix vc_runtime` / `--fix wintun` 可直接修）。
+
+### 从源码跑（开发者）
+
+```bat
+git clone <本仓库地址>
+cd <仓库目录>
+
+scripts\setup.bat      :: 只装 Python 依赖，内核已经在仓库里了
+scripts\start_tray.bat :: 起托盘图标
+```
+
+内核随仓库一起 clone 下来，**没有「必须先拉内核」这一步**。
+
+### 自己打包
+
+```bat
+python scripts\build_release.py              :: 绿色版 + 安装版
+python scripts\build_release.py --zip        :: 只出绿色版
+python scripts\build_release.py --installer  :: 只出安装版
+```
+
+产出 `dist\` 下两个文件：`AppProxy-v<版本>-win64.zip`（绿色版）和
+`AppProxy-v<版本>-win64-setup.exe`（安装版）。安装版需要装一次
+[Inno Setup 6](https://jrsoftware.org/isdl.php)（`winget install JRSoftware.InnoSetup`），
+没装就只出绿色版，不会报错。
+
+---
+
+## 日常怎么用
+
+1. 双击 `AppProxy.exe` → 托盘出现（**不会预热任何内核**）
+2. 双击托盘图标 → 主界面
+3. 左侧选一个软件 → 右侧点「启动」→ 它那条线路的内核起来（约 1 秒）→ 程序带着代理打开
+4. 用完直接关程序。5 秒内后台发现没人在用，内核自动退场
+5. 要加新软件：主界面点「＋」→ 从已安装程序里挑 → 选它走哪条线路 → 「添加」
+
+托盘右键只有 6 项：打开主界面 / 设置… / 启动所有软件 / 关闭所有软件 / 系统代理 / 退出。配置类的东西都在主界面 —— 在托盘里翻三层菜单找线路，比在主界面点一下难得多。
+
+---
+
+## 技术架构
+
+```
+                     ┌──────────────────────────────────────┐
+   托盘 (pystray)  ──┤                                      │
+                     │   appproxy/                          │
+   主界面 (Chrome   │   ├─ cli.py         命令行入口         │
+   --app 窗口)   ────┤   ├─ tray.py        托盘菜单与动作     │
+        │            │   ├─ gui.py         本地 HTTP 服务 + 窗口壳
+        │            │   ├─ webui/api.py   FastAPI 接口        │
+        │            │   └─ webui/static/index.html  单页前端   │
+        │            │                                      │
+   HTTP 127.0.0.1:<随机端口>                              │
+                     └───────────────┬──────────────────────┘
+                                     │
+        ┌────────────────┬───────────┴──────────┬────────────────┐
+        │                │                      │                │
+   subscription.py    pool.py             procwatch.py      sysproxy.py
+   订阅 → 节点       内核按需池            进程探活           系统代理
+        │                │                      │            （备份/还原）
+   singconf.py /    coreproc.py                 │
+   xrayconf.py      起停/校验/探测              │
+        │                │                      │
+        └────────┬───────┘                      │
+                 │                              │
+        sing-box / xray（独立进程）        profiles.py / launcher.py
+        process_name 分流、urltest         「软件 × 线路」怎么起
+```
+
+| 模块 | 职责 |
+|---|---|
+| `models.py` | 节点 / 线路数据结构，生成 xray outbound |
+| `subscription.py` | 拉订阅、解析分享链接（vless/vmess/trojan/ss） |
+| `singconf.py` / `xrayconf.py` | 两套配置生成，都有 `sing-box check` / `xray test` 校验 |
+| `coreproc.py` | 起停内核、端口探测、经代理发请求验活 |
+| `registry.py` | `lines.json` + 节点快照 |
+| `profiles.py` / `launcher.py` | 档案存储、组装启动命令、注入代理参数、**多开隔离**（`isolation()`） |
+| `procwatch.py` | 判断档案对应的程序还开着吗（Chromium 按 `--user-data-dir` 精确匹配） |
+| `pool.py` | 内核按需池：登记、回收（60 秒宽限）、GC |
+| `autosub.py` | 订阅自动更新：到期判断、失败退避、拉到新节点只标记不重启 |
+| `diag.py` | 诊断包：打包 + **凭据打码** + 生成后自检 |
+| `transfer.py` | 配置导入导出：丢端口、丢本机痕迹、孤儿档案改直连 |
+| `icons.py` / `shortcut.py` | 多尺寸 `.ico`（大字取软件名首字）、`.lnk`（win32com 优先，pylnk3 兜底） |
+| `sysproxy.py` / `autostart.py` | 系统代理接管与还原、开机自启 |
+| `appscan.py` / `appdb.py` | 扫开始菜单的已安装程序、常用软件清单（73 条）与推荐列表 |
+| `preset.py` | 首次启动建好的那批常用软件（左侧第一屏）、删除记录、不自动复活 |
+| `appfind.py` | 找「这个程序装在哪」：注册表 App Paths → 索引 → 浅扫，排除商店版 |
+| `tunconf.py` / `tunmgr.py` / `elevate.py` | TUN 配置、启停、一次性提权 |
+| `setup.py` | 新用户接线（订阅 / 分享链接 / 本地端口） |
+
+---
+
+## 关键设计取舍
+
+### 1. 主用法是「塞代理参数」，TUN 只是兜底
+
+塞参数零权限、双击即用、不碰路由表；TUN 覆盖面全但要管理员、要装虚拟网卡驱动、个别反作弊会拦。所以默认关，谁需要谁开。
+
+### 2. 一个档案独占一对本地端口
+
+sing-box 的 `process_name` 规则按进程名匹配，**同一个 exe 的多个实例无法区分**。所以「同软件多开」不靠进程名，而是每个档案一个本地端口（每对端口由软件随机分配，不固定号段），进程名规则只用于「一个端口覆盖一类程序」。
+
+### 3. 内核按需起，没人用就退场
+
+早期版本是「全部开始 / 全部停止」，本质是预热所有线路 —— 那就退化成 v2rayN 了，还更慢。改成按需后：点启动只拉一条线路（约 1 秒），关程序 5 秒内回收。**手动起的内核不会被自动回收**（池里登记过才回收，手动起的不在册）。
+
+### 4. 系统代理是「借用」不是「霸占」
+
+接管前把原值读出来存好，关闭时原样写回（本机实测：`http=127.0.0.1:10888;https=…` 完整还原）。**必须写 `ProxyOverride` 跳过本地地址** —— 否则本机的界面端口（随机分配的那个）会被送进代理，代理没起来就是整片白屏，自己把自己锁在门外（踩过）。
+
+### 5. TUN 四条铁律
+
+1. **未登记的程序一律直连**（`route.final = direct`）—— 不越权接管别人的流量
+2. 只有建过档案、绑了线路的进程才走代理（按 `process_name`）
+3. **开 TUN 自动关系统代理**（记住原状态），关 TUN 时还原 —— 两者同时开会绕圈
+4. **不做 kill-switch**（断线保护）—— 避免内核一抖整机没网
+
+提权只做一次：装一个**没有触发器**的计划任务（`AppProxyTun`，`RunLevel = HighestAvailable`），内核由任务拉起。安装那一下用 `ShellExecuteW("runas")` 自己弹 UAC；以后启动只是 `schtasks /Run`，普通权限即可。
+
+> 生成 TUN 配置后**必须** `sing-box check` 真校验：sing-box 1.12+ 只要配了 `dns` 段，就必须有 `route.default_domain_resolver`，否则直接 FATAL。这个错在用户那边就是整机断网。
+
+### 6. 界面窗口用 Chrome / Edge 的 `--app` 模式
+
+pywebview（WebView2）在部分机器上环境创建失败时只留一片白，且不给错误。改用 `msedge.exe --app=http://127.0.0.1:<随机端口> --user-data-dir=...`：没有地址栏、没有标签页、关窗口即退出，正好当退出信号。`--native` 仍保留 pywebview 通道。
+
+### 7. 托盘与界面是两个进程，靠路标文件认门
+
+`D:\AppProxy\gui.port` 写下界面实际端口（随机分配、重启沿用），`/api/ping` 返回 `app=appproxy` 认门 —— 免得把别人占着的同一个号当成自家界面去发指令。切页指令走一次性内存信箱，取走即清空，否则界面轮询会把用户手动切走的页面强行拉回来。
+
+---
+
+## 隐私与安全
+
+- **所有数据在本地**：`D:\AppProxy\`（可用环境变量 `APPPROXY_HOME` 换位置）。没有云端账号、没有遥测、没有「上报」。
+- **订阅地址带 token，所以仓库里一条线路数据都没有**：`data/` 是空的，clone 下来第一次打开就是接线页。
+- **系统代理可还原**：接管前备份，关闭时原样写回。
+- **不做 kill-switch**：宁可漏一会儿，也不让内核异常导致整机断网。
+- **不替用户选服务商**：本软件只提供「按程序分流」这件事，线路是你自己的。
+
+---
+
+## 目录结构
+
+```
+分应用代理管家/
+├─ appproxy/                 源码
+│  ├─ webui/
+│  │  ├─ api.py              FastAPI 接口
+│  │  └─ static/index.html   单页前端（无框架）
+│  ├─ preflight.py           环境体检：缺什么运行库 + 一键安装
+│  ├─ selfrun.py             源码/打包两种形态下「再拉起自己」
+│  ├─ settings.py            路径解析（便携 / 安装版 / 回退）
+│  └─ data/apps_need_proxy.json  「明显需要代理」清单
+├─ scripts/                  setup.bat / start_tray.bat / start_gui.bat
+│                            build_release.py（出两种发布包）/ fetch_engine.py（升级内核）
+├─ packaging/                PyInstaller 配置 + exe 入口 + Inno Setup 安装脚本
+│                            installer.iss / ChineseSimplified.isl / AppProxy.spec
+├─ tests/                    单测 + 端到端脚本 + 出图脚本
+├─ tools/verify_tun.py       TUN 一键自检（起内核、查网卡、出报告）
+├─ docs/                     截图与文档
+├─ third_party/              sing-box 内核 + wintun 驱动（随仓库分发，clone 即有）
+└─ requirements.txt
+```
+
+运行数据的位置**跟着软件走**，不写死任何盘符：
+
+| 形态 | 数据默认落在哪 | 想换位置 |
+|---|---|---|
+| 安装版 | `<安装目录>\AppProxyData\` | 设置 → 数据目录 → 更改… |
+| 绿色版 | `<解压目录>\AppProxyData\` | 同上 |
+| 源码运行 | `D:\AppProxy`（有 D 盘）> `%LOCALAPPDATA%\AppProxy` | `APPPROXY_HOME` 环境变量 |
+
+**装在哪个目录，数据就在哪个目录** —— 安装时不额外问一遍。整个文件夹搬走（换盘符、
+拷 U 盘、换电脑）数据跟着走；软件里也能随时改到一个更空的盘，现有配置会自动复制过去。
+只有程序目录写不进去时（装在 `Program Files` 又没给权限）才退到 `%LOCALAPPDATA%\AppProxy`。
+
+订阅地址带 token（访问令牌），所以数据永远和程序文件分开，不会跟着安装包一起发出去。
+
+---
+
+## 命令行速查
+
+```bat
+:: 线路
+python -m appproxy.cli add --id myproxy --name 我的机场 --sub "<订阅地址>"
+python -m appproxy.cli update myproxy          :: 拉订阅
+python -m appproxy.cli nodes  myproxy          :: 看节点
+python -m appproxy.cli ping   myproxy --top 10 :: 测速
+python -m appproxy.cli build  myproxy --probe  :: 生成配置（先实测可用节点）
+python -m appproxy.cli start  myproxy
+python -m appproxy.cli stop   myproxy
+
+:: 档案
+python -m appproxy.cli profile suggest            :: 常用软件清单：本机装没装、建没建过
+python -m appproxy.cli profile add --app telegram --line myproxy
+python -m appproxy.cli profile add --app facebook --line myproxy --web   :: 不装也能用，开网页
+python -m appproxy.cli profile add --name "Chrome·A" --exe "C:\...\chrome.exe" --line myproxy
+python -m appproxy.cli profile add --name "Chrome·B" --exe "C:\...\chrome.exe" --line myproxy  :: 同软件第二个实例
+python -m appproxy.cli profile set chrome-b --isolate off     :: 关掉数据隔离（会共用配置）
+python -m appproxy.cli profile set chrome-b --line @default  :: 绑到默认线路（跟着走）
+python -m appproxy.cli profile launch chrome-a
+python -m appproxy.cli profile list
+
+:: 左侧那批常用软件（首次启动自动建好）
+python -m appproxy.cli preset                    :: 看现在有哪些、缺哪几个
+python -m appproxy.cli preset --restore          :: 把缺的补回来
+
+:: 界面与托盘
+python -m appproxy.cli gui                     :: 主界面
+python -m appproxy.cli gui --view settings     :: 直接落在设置页
+python -m appproxy.cli tray                    :: 托盘（前台，调试用）
+
+:: 系统级
+python -m appproxy.cli sysproxy enable <端口>
+python -m appproxy.cli sysproxy restore
+python -m appproxy.cli autostart on|off
+python -m appproxy.cli tun start|stop|status|remove
+python -m appproxy.cli appdb find chrome.exe   :: 这个程序要不要代理
+python -m appproxy.cli cleanup                 :: 预演清空线路数据（发布前用）
+
+:: 订阅自动更新 / 排障 / 搬家
+python -m appproxy.cli auto                    :: 看每条线路的更新状态
+python -m appproxy.cli auto --interval 6       :: 改成每 6 小时（--off 关闭）
+python -m appproxy.cli auto --run              :: 立刻把到期的拉一遍
+python -m appproxy.cli diag                    :: 打诊断包（凭据自动打码）
+python -m appproxy.cli export --out cfg.json   :: 导出配置（不含订阅地址）
+python -m appproxy.cli import cfg.json --fetch :: 导入并顺手拉一次订阅
+```
+
+---
+
+## 测试
+
+```bat
+python -m pytest tests -q
+```
+
+**202 项单元测试**通过。除单测外，`tests\` 下还有一批**真机端到端脚本**（会真的起内核、开窗口、写注册表，跑之前先看清注释）：
+
+| 脚本 | 验的是什么 |
+|---|---|
+| `live_dispatch.py` | 订阅 → 配置 → 内核 → 经代理发请求 |
+| `live_profile.py` | 档案启动、`--user-data-dir` 隔离 |
+| `live_shortcut.py` | 快捷方式与图标生成 |
+| `live_sysproxy.py` | 系统代理接管与**原样还原** |
+| `live_ondemand.py` | 内核按需起停与回收 |
+| `live_view.py` | 界面接口、深链、`--shot` 出图 |
+| `live_window.py` | 真窗口：托盘点设置 → 切页 + 任务栏闪烁 |
+| `live_setup.py` | 空数据 → 接线页 → 建线路 → 引导消失 |
+| `verify_tun.py` | TUN 全链路（要一次管理员授权） |
+
+出图脚本：`make_tray_sheet.py`、`make_icon_sheet.py`、`make_tun_sheet.py`、`make_demo_home.py`（造演示数据，出图时不暴露真实订阅）。
+
+---
+
+## 已知限制
+
+- **只支持 Windows**（`pystray` / `pywin32` / 注册表系统代理都是 Windows 特定）。
+- **同一 exe 的多个实例无法用同一份进程名区分**：浏览器靠「档案各带 `--user-data-dir` + `--proxy-server`」分开，其余程序靠 `process_name` 规则；两条档案挂在同一条线路上时，共用这条线路的端口。
+- **TUN 需要一次管理员授权**，且个别带反作弊的游戏会拦虚拟网卡。
+- **不内置任何节点、不推荐服务商**。没有线路时软件只能直连。
+- **界面依赖本机有 Chrome 或 Edge**（`--app` 模式）；两者都没有时退回默认浏览器 + `--native`（需装 pywebview）。
+- **不是单文件 exe**：`.exe` 与 `_internal\` 目录必须放在一起，只拷 exe 跑不起来。要搬走就整个文件夹一起搬。
+
+---
+
+## 第三方组件与许可
+
+| 组件 | 版本 | 许可 | 用法 |
+|---|---|---|---|
+| [sing-box](https://github.com/SagerNet/sing-box) | 1.14.4 | GPL-3.0-or-later | 独立 exe，独立进程调用，**未修改源码** |
+| [xray-core](https://github.com/XTLS/Xray-core) | 26.6.1 | MPL-2.0 | 同上，仅用于兼容老线路 |
+
+因为采用「独立进程调用 + 不修改源码 + 不静态链接」，本项目自身的代码不被 GPL 传染。
+分发时随包附上 `third_party/sing-box/.../LICENSE` 原文并注明版本与上游地址即可。
+
+详见 [`third_party/来源与许可.md`](third_party/来源与许可.md)。
+
+---
+
+## 版权与许可
+
+代码采用 **MIT 许可证**，全文见 [`LICENSE`](LICENSE)。
+
+也就是说：可以免费使用、修改、再分发，甚至商用，唯一要求是保留版权声明与许可声明。
+改完不必回传，但如果你修了 bug，欢迎提 PR。
+
+**第三方组件各自保留其原许可**，不受 MIT 影响：
+
+| 组件 | 许可 |
+|---|---|
+| [sing-box](https://github.com/SagerNet/sing-box) 1.14.4 | GPL-3.0-or-later（以独立进程调用，未修改源码，包内附 LICENSE 原文） |
+| [Wintun](https://www.wintun.net/) | 见包内 `wintun-LICENSE.txt` |
+
+本软件免费提供，没有广告、没有统计上报，也不会上传任何本地数据。
+
+---
+
+延伸阅读：[`docs/开发日志.md`](docs/开发日志.md)（每一步做了什么、为什么这么选、踩过哪些坑）、[`docs/发布前检查清单.md`](docs/发布前检查清单.md)（打包前必看）。

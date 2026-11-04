@@ -322,3 +322,31 @@ def find_engine(engine: str = "singbox", explicit: str | None = None) -> Path | 
     if (engine or "").lower().startswith("sing"):
         return find_singbox(explicit)
     return find_xray(explicit)
+
+
+# ---------------------------------------------------------------------------
+# 界面语言（zh / en）—— WebUI 一键切换时写这里，托盘菜单跟着读。
+# 文件放数据目录（ui.json），绿色版跟文件夹走、安装版跟数据走。
+
+def ui_lang_path() -> Path:
+    return data_dir() / "ui.json"
+
+
+def ui_lang() -> str:
+    """当前界面语言。默认 zh（老用户无感）；WebUI 首次打开会按浏览器语言回写。"""
+    try:
+        import json as _json
+        return str((_json.loads(ui_lang_path().read_text(encoding="utf-8"))
+                    or {}).get("lang") or "zh")
+    except Exception:  # noqa: BLE001  文件不存在/坏档都是 zh
+        return "zh"
+
+
+def set_ui_lang(lang: str) -> None:
+    if lang not in ("zh", "en"):
+        raise ValueError(f"不支持的语言：{lang!r}（只支持 zh / en）")
+    import json as _json
+    p = ui_lang_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(_json.dumps({"lang": lang}, ensure_ascii=False, indent=1),
+                 encoding="utf-8")

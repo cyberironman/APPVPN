@@ -174,7 +174,8 @@ def test_menu_is_short_with_two_doors_to_settings(home, monkeypatch):
     # 开关对象是「软件」，不是线路
     assert any("启动所有软件" in x for x in labels)
     assert any("关闭所有软件" in x for x in labels)
-    assert "系统代理" in labels
+    # 系统代理：2026-11-02 起只留一行「永不修改」说明，不再有子菜单开关
+    assert any(x.startswith("系统代理：永不修改") for x in labels)
     # 这些已经挪进主界面，不该再占托盘
     for gone in ("线路", "应用", "打开", "开机自启"):
         assert gone not in labels, f"{gone} 还留在托盘里"
@@ -185,9 +186,10 @@ def test_menu_without_data(home, monkeypatch):
     t = tray.Tray()
     menu = t.build_menu()
     assert menu is not None
-    labels = [i.text for i in menu.items]
-    assert any("添加线路" in (s.text or "") for i in menu.items if i.submenu
-               for s in i.submenu.items)
+    labels = [i.text for i in menu.items if i.text]
+    # 系统代理子菜单已移除；无数据时的「添加线路」提示挪进了主界面
+    assert any(x.startswith("系统代理：永不修改") for x in labels)
+    assert not any(i.submenu and "系统代理" == (i.text or "") for i in menu.items)
 
 
 def test_settings_item_flips_to_flash_hint_when_gui_open(home, monkeypatch):

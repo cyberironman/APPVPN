@@ -46,7 +46,7 @@ if sys.stderr is None:
 import pystray  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
-from appproxy import (autosub, coreproc, gui, launcher, localport, pool,  # noqa: E402
+from appproxy import (autosub, coreproc, gui, i18n, launcher, localport, pool,  # noqa: E402
                       procwatch, profiles, settings, shortcut, sysproxy)
 from appproxy.registry import Registry  # noqa: E402
 
@@ -224,7 +224,7 @@ class Tray:
                 fn(*a, **kw)
             except Exception as e:  # noqa: BLE001
                 log(f"[!!] {type(e).__name__}: {e}")
-                self.notify(f"失败：{e}")
+                self.notify(i18n.tr(f"失败：{e}"))
             finally:
                 self._busy = False
                 self.refresh()
@@ -263,7 +263,7 @@ class Tray:
                     done += 1
                 except Exception as e:  # noqa: BLE001
                     log(f"[!!] {prof.id}: {type(e).__name__}: {e}")
-            msg = f"{done} 个软件已启动" if start else f"{done} 个软件已关闭"
+            msg = i18n.tr(f"{done} 个软件已启动") if start else i18n.tr(f"{done} 个软件已关闭")
             log(msg)
             self.notify(msg)
             self.refresh()
@@ -281,7 +281,7 @@ class Tray:
                 self.notify(msg)
             except Exception as e:  # noqa: BLE001
                 log(f"[!!] 打开界面失败：{type(e).__name__}: {e}")
-                self.notify(f"打开界面失败：{e}")
+                self.notify(i18n.tr(f"打开界面失败：{e}"))
             finally:
                 self._gui_checked = 0.0     # 立刻重新探一次，菜单文案要跟上
                 self.refresh()
@@ -297,17 +297,8 @@ class Tray:
         self._open_view("settings")
 
     # -- 系统代理 -----------------------------------------------------------
-    def act_sysproxy(self, port: int | None) -> None:
-        def run() -> None:
-            if not port:
-                st = sysproxy.disable()
-                log(f"系统代理：{sysproxy.describe(st)}")
-                self.notify("系统代理已关闭（已还原接管前的设置）")
-                return
-            st = sysproxy.enable(port)
-            log(f"系统代理：{sysproxy.describe(st)}")
-            self.notify(f"系统代理 → 127.0.0.1:{port}\n（关闭时会还原原来的设置）")
-        self.bg(run)
+    # ★ 2026-11-02 起菜单里不再提供系统代理开关（用户硬规定：永不修改系统代理）。
+    #   act_sysproxy 一并移除；sysproxy.disable() 的「还原历史备份」能力保留给 tunmgr。
 
     # -- 其它 ---------------------------------------------------------------
     # 开机自启、打开数据/日志目录这些「配置一次」的入口已挪到主界面设置页，
@@ -340,49 +331,41 @@ class Tray:
         它们在托盘的子菜单里翻三层才能找到，比在主界面点一下难得多。
         """
         _, summary = self.state()
-        sp = sysproxy.read()
 
-        sys_items = [
-            pystray.MenuItem(lambda it, t=sysproxy.describe(sp): f"当前：{t}",
-                             None, enabled=False),
-            pystray.MenuItem("关闭系统代理（还原原设置）",
-                             lambda icon, item: self.act_sysproxy(None)),
-        ]
-        for line in self.reg.lines:
-            checked = sysproxy.matches_port(sp, line.http_port)
-            sys_items.append(pystray.MenuItem(
-                (lambda it, t=f"{line.name}（{line.http_port}）", c=checked:
-                 ("✓ " if c else "　") + t),
-                (lambda port: (lambda icon, item: self.act_sysproxy(port)))(line.http_port),
-                radio=True, checked=(lambda it, c=checked: c)))
-        if not self.reg.lines:
-            sys_items.append(pystray.MenuItem("（先在主界面设置里添加线路）",
-                                              None, enabled=False))
-        sys_menu = pystray.Menu(*sys_items)
+        # ★ 2026-11-02 用户硬规定：所有代理软件永不修改系统代理。
+        #   菜单里不再提供开关，只留一行说明（保留读状态用于展示）。
+        sp = sysproxy.read()
+        sys_note = "系统代理：永不修改（各软件按档案分流）"
+        if sp.get("enable"):
+            sys_note = f"系统代理：由其他程序管理（{sp.get('server','')}），本产品不碰"
 
         # 先探一次界面在不在，两个动态文案后面直接读缓存，右键不卡
         self.gui_open()
 
         return pystray.Menu(
             # 点这一行 = 打开主界面（双击托盘图标同效），summary 顺便当状态栏
-            pystray.MenuItem(f"{TITLE} · {summary}", self.act_open_gui, default=True),
+            pystray.MenuItem(i18n.tr(f"{TITLE} · {summary}"),
+                             self.act_open_gui, default=True),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
-                (lambda it: "显示主界面（已在后台）" if self.gui_open() else "打开主界面"),
+                (lambda it: i18n.tr("显示主界面（已在后台）" if self.gui_open()
+                                    else "打开主界面")),
                 lambda icon, item: self.act_open_gui()),
             # 窗口开着时这一项不再「开新窗口」，而是切到设置页 + 让窗口在任务栏闪，
             # 文案直接写明白，省得用户以为点了没反应。
             pystray.MenuItem(
-                (lambda it: "设置（切到界面并闪烁提示）" if self.gui_open() else "设置…"),
+                (lambda it: i18n.tr("设置（切到界面并闪烁提示）" if self.gui_open()
+                                    else "设置…")),
                 lambda icon, item: self.act_open_settings()),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("启动所有软件", lambda icon, item: self.act_all_profiles(True)),
-            pystray.MenuItem("关闭所有软件（并释放内核）",
+            pystray.MenuItem(i18n.tr("启动所有软件"),
+                             lambda icon, item: self.act_all_profiles(True)),
+            pystray.MenuItem(i18n.tr("关闭所有软件（并释放内核）"),
                              lambda icon, item: self.act_all_profiles(False)),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("系统代理", sys_menu),
+            pystray.MenuItem(i18n.tr(sys_note), None, enabled=False),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出", lambda icon, item: self.act_quit()),
+            pystray.MenuItem(i18n.tr("退出"), lambda icon, item: self.act_quit()),
         )
 
     # -- 运行 ---------------------------------------------------------------

@@ -235,6 +235,7 @@ select:focus{border-color:var(--blue)}
           <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
         </svg>
       </button>
+      <button class="icon-btn" id="btn-lang" style="font-size:11px;font-weight:600"></button>
       <button class="icon-btn" id="btn-add" title="添加软件">＋</button>
     </div>
     <div class="search"><input id="q" placeholder="搜索软件或线路" autocomplete="off"></div>
@@ -258,6 +259,291 @@ select:focus{border-color:var(--blue)}
   <main class="main" id="main"></main>
 </div>
 <div id="toast"></div>
+
+<script>
+/* ================= i18n：运行时 DOM 翻译（中文原文作键） =================
+   界面照常渲染中文，这一层在英文模式下把文本节点/属性实时替换成英文；
+   切回中文时用缓存的原文还原。动态渲染由 MutationObserver 兜底。
+   默认语言跟浏览器走（zh* → 中文，否则英文），点左上角按钮一键切换，
+   选择存 localStorage 并回写 /api/lang —— 托盘菜单跟着变。 */
+const EN_DICT = {
+  /* chrome */
+  "分应用代理管家": "AppProxy",
+  "设置": "Settings",
+  "添加软件": "Add apps",
+  "搜索软件或线路": "Search apps or lines",
+  "读取中…": "Loading…",
+  "选一个软件看详情": "Pick an app to see details",
+  "还没有软件": "No apps yet",
+  "点右上角 ＋，从常用软件清单里挑一个":
+    "Tap ＋ on the top right to pick from the popular list",
+  "没有匹配的软件": "No matching apps",
+  "设置：线路 / 系统代理 / 开机自启 / 目录":
+    "Settings: lines / system proxy / autostart / data folder",
+  "点一下看详情，双击直接打开": "Click for details, double-click to open",
+  "正在连接…": "Connecting…",
+  "正在读取设置…": "Loading settings…",
+  "正在读取程序列表…": "Loading app list…",
+  /* 状态与按钮 */
+  "运行中": "Running", "未运行": "Not running", "已打开": "Open",
+  "已启动": "Running", "打开": "Open", "关闭": "Close", "关掉": "Close",
+  "关闭中…": "Closing…", "已关闭": "Closed", "关闭失败：": "Close failed: ",
+  "启动": "Start", "启动中…": "Starting…", "启动失败：": "Start failed: ",
+  "停止中…": "Stopping…", "连接": "Connect", "断开": "Disconnect",
+  "连接中断": "Disconnected", "连接中…（约 2 秒）": "Connecting… (a couple of seconds)",
+  "内核运行中": "Connected", "内核未启动": "Not connected",
+  "（已连接）": " (connected)", "直连（不走代理）": "Direct (no proxy)",
+  "直接打开，不走代理": "Opens directly, without a proxy",
+  "处理": "Fix", "处理中…": "Fixing…", "建议处理": "Recommended",
+  "必须处理": "Required", "失败": "Failed", "进行中": "In progress",
+  "完成": "Done", "更新失败": "Update failed", "未启用": "Disabled",
+  "打包中…": "Packing…", "导入中…": "Importing…", "添加中…": "Adding…",
+  "更新中…": "Updating…", "补回中…": "Restoring…", "等待授权…": "Waiting for elevation…",
+  "请在弹出的窗口里选…": "Pick in the popup window…",
+  /* 详情页 */
+  "启动网页版": "Open web version", "启动客户端": "Open desktop app",
+  "启动客户端（未安装）": "Open desktop app (not installed)",
+  "网页版（独立浏览器窗口）": "web version (dedicated browser window)",
+  "在专属浏览器窗口里打开网页版，数据独立、走绑定的线路":
+    "Opens the web version in a dedicated browser window — separate data, goes through the bound line",
+  "启动安装好的桌面客户端，同样走绑定的线路、用独立数据":
+    "Opens the installed desktop app — same bound line, separate data",
+  "开一个带代理环境变量的终端，codex / git / npm 自动走这条线路":
+    "Opens a terminal with proxy env vars — codex / git / npm go through this line automatically",
+  "实测所有节点，把最快的固定为这条线路的出口（IP 从此稳定）":
+    "Tests all nodes and pins the fastest as this line's exit (IP stays stable)",
+  "不装也能用，直接开网页": "Works without installing — opens the web version",
+  "本机还没装桌面客户端，点按后会告诉你官网地址":
+    "Desktop app not installed — clicking shows the official download page",
+  "这个没有官方下载页，自行搜索安装即可":
+    "No official download page — search and install it yourself",
+  "装的是微软商店版，不接受代理参数":
+    "This is the Microsoft Store version — it ignores proxy parameters",
+  "状态": "Status", "绑定线路": "Line", "这是什么效果": "What this does",
+  "程序": "Program", "数据隔离": "Data isolation", "数据目录": "Data folder",
+  "图标": "Icon", "删除": "Delete", "开机自启": "Autostart",
+  "诊断包": "Diagnostics", "软件位置": "Install location", "策略": "Policy",
+  "接管": "Take over", "配置": "Config", "频率": "Frequency",
+  "新档案默认": "Default for new apps",
+  "高级设置（程序路径 / 数据 / 线路详情 / 日志）":
+    "Advanced (program path / data / line details / logs)",
+  "最近日志（排查问题才需要看）": "Recent logs (for troubleshooting)",
+  "线路连接详情": "Line connection details",
+  "连接是按需的：打开软件时会自动连上；软件关掉、也没别的软件在用这条线路时，会自动断开省资源。手动连上的不会被自动断开。":
+    "Connections are on demand: opening an app connects automatically; when the app closes and nothing else uses the line, it disconnects to save resources. Manually connected lines stay up.",
+  "这个软件不走代理，打开就是直连。":
+    "This app does not use a proxy — it opens directly.",
+  "换线路不用回来改这里 —— 改「默认线路」，这一批一起动。":
+    "No need to come back here to change lines — switch the \"default line\" and this batch follows.",
+  "还没选线路：先在设置里添加一条线路，再回到这里选上，打开时就会自动走它。":
+    "No line selected yet: add a line in Settings first, come back and pick one, and this app will use it automatically.",
+  "不挂代理、直接连。": "no proxy, direct connection.",
+  "自动走「": "automatically goes through \"",
+  "」这条线路，登录状态存在自己专属的数据里，和你平时用的浏览器互不干扰。":
+    "\" on this line; the login state lives in its own private data, separate from your everyday browser.",
+  "点上面的按钮打开": "Click the button above to open ",
+  "这个软件": "this app",
+  "默认 · 跟着软件走": "Default · follows the app",
+  "已停止（提权任务就绪）": "Stopped (elevation task ready)",
+  /* 提示/任务 */
+  "已开始更新订阅并测速，进度见下方":
+    "Started updating the subscription and testing speed — see the task list below",
+  "已开始更新到期的订阅，进度见下方任务":
+    "Started refreshing due subscriptions — see the task list below",
+  "已开始导入，完成情况见下方任务列表": "Import started — see the task list below",
+  "已开始测速，测完自动固定最快节点并重启内核，进度见下方":
+    "Speed test started; the fastest node gets pinned and the core restarts — see below",
+  "界面和后台断开连接了：把软件关掉重新打开即可":
+    "The UI lost connection to the backend: close and reopen the app",
+  "软件内部出了点小问题，再试一次；反复出现就到「设置 → 排障与搬家」导出诊断包发给我们":
+    "Something went wrong inside the app. Try again; if it repeats, export a diagnostics package in Settings → Troubleshooting and send it to us",
+  "等了很久没反应，多半是网络不通：先确认这条线路能用，再重试":
+    "No response for a long time — the network is probably down: check this line works, then retry",
+  "删除失败：": "Delete failed: ", "改线路失败：": "Changing line failed: ",
+  "重做失败：": "Rebuild failed: ", "添加失败：": "Add failed: ",
+  "批量添加未成功的：": "Batch add failed for: ",
+  "如弹出「用户账户控制」窗口，请点「是」——只需授权这一次":
+    "If a User Account Control prompt appears, click Yes — only needed once",
+  "导出诊断包": "Export diagnostics",
+  "日志 + 配置 + 环境体检打成一个 zip；订阅地址、uuid、密码自动打码，可直接发人":
+    "Logs + config + environment checks zipped; subscription URLs, uuids and passwords are redacted — safe to send",
+  "导入配置…": "Import config…", "把缺的补回来": "Restore missing presets",
+  /* 添加软件页 */
+  "本机已装 · 点一下就加": "Installed — click to add",
+  "本机未安装": "Not installed",
+  "去官网安装": "Install from website", "加网页快捷方式": "Add web shortcut",
+  "网页版": "Web", "添加": "Add", "一键添加": "Add all", "重新扫描": "Rescan",
+  "清单还没加载好，点右上角「重新扫描」。":
+    "List not loaded yet — click \"Rescan\" on the top right.",
+  "还没扫描过，点右上角「重新扫描」。":
+    "Not scanned yet — click \"Rescan\" on the top right.",
+  "常用": "Common", "需代理": "Needs proxy", "常需要": "Usually needs proxy",
+  "办公": "Office", "工具": "Tools", "通讯": "Messaging", "影音": "Media",
+  "游戏": "Games", "开发": "Development", "浏览器": "Browsers", "其他": "Other",
+  "内置了一份「明显需要代理的软件」清单（Facebook、YouTube、Chrome、Codex、Telegram…）。":
+    "Comes with a built-in list of apps that obviously need a proxy (Facebook, YouTube, Chrome, Codex, Telegram…).",
+  "添加软件时会自动提示哪些该挂代理 —— 但永远不会替你决定用哪条线路。":
+    "When adding apps it suggests which ones need a proxy — but never decides the line for you.",
+  "在这里添加的每个软件都带着自己的线路和独立数据：可以同一个软件开好几个、各走各的代理、互不干扰。桌面图标也会帮你建好。":
+    "Every app added here carries its own line and separate data: run several copies of the same app, each through its own proxy, without interference. Desktop icons are created for you.",
+  "点开直达该网站，不影响你平时用的那个浏览器。":
+    "Opens the site directly, without touching your everyday browser.",
+  "一个专属浏览器窗口，点开直达，跟你平时的浏览器互不干扰）。":
+    "a dedicated browser window, one click away, separate from your everyday browser).",
+  "没装的点「去官网安装」，装完回来再点一次。只有网页版的会给你一个":
+    "For the ones not installed, click \"Install from website\", then come back. Web-only ones get ",
+  /* 设置页 */
+  "线路（每条线路 = 一个订阅 + 一个本地端口 + 一个内核进程）":
+    "Lines (each = one subscription + one local port + one core process)",
+  "停内核": "Disconnect", "起内核": "Connect",
+  "有新节点 · 重启内核生效": "New nodes · applied on next connect",
+  "左侧常用软件（默认就摆好，不用自己去找）":
+    "Popular apps pinned on the left (no need to hunt for them)",
+  "第一次启动时会自动建好 Telegram / WhatsApp / Messenger / Facebook / Instagram / X / YouTube 这几条：":
+    "On first start these are created automatically: Telegram / WhatsApp / Messenger / Facebook / Instagram / X / YouTube:",
+  "它们绑的是「跟着默认线路走」，所以你导入订阅之后会自动挂上，不用回来一个个改；":
+    "They follow the \"default line\", so after importing a subscription they attach automatically — no need to edit each one;",
+  "还没有线路时左侧那一行会显示琥珀色的「还没选线路」。删掉的不会自己长回来 —— 想要就点上面那个按钮补。":
+    "With no lines yet, the sidebar shows an amber \"no line selected\". Deleted ones never come back — use the button above to restore.",
+  "想要就点上面那个按钮补。": "Use the button above to restore them.",
+  "订阅自动更新（节点过期不用再自己点）":
+    "Subscription auto-update (no manual refresh when nodes expire)",
+  "自动更新": "Auto-update", "关闭（全靠手动）": "Off (manual only)",
+  "立即更新到期的": "Refresh due now",
+  "托盘在后台按这个频率拉订阅。":
+    "The tray pulls subscriptions at this interval in the background.",
+  "系统代理开关已移除（永不修改系统代理）":
+    "System proxy toggle removed (never touches the system proxy)",
+  "系统代理是给其他程序用的，我们只读不改。":
+    "The system proxy belongs to other programs — we only read it, never change it.",
+  "永不修改（2026-11-02 起）": "Never modified",
+  "已开启": "On", "未开启": "Off",
+  "当前系统代理处于关闭状态。": "The system proxy is currently off.",
+  "TUN · 虚拟网卡接管（高级）": "TUN · virtual adapter takeover (advanced)",
+  "给「不认代理参数」的程序兜底（游戏、部分 Electron 客户端）。会建一块虚拟网卡，":
+    "Fallback for apps that ignore proxy parameters (games, some Electron clients). Creates a virtual network adapter;",
+  "开启时会自动关掉系统代理（避免绕圈），关闭时原样还原。":
+    "Enabling it turns the system proxy off (to avoid loops); disabling restores what was there.",
+  "换电脑时用它，不用整目录搬。导入的端口会":
+    "Use this to move to another PC — no need to copy the whole folder. Imported ports are",
+  "（每台机器各自一套），": " (re-assigned per machine),",
+  "「含订阅地址」那档等于把订阅明文导出，别发给别人、别提交到仓库。":
+    "\"including subscription URLs\" exports them in plain text — don't share it or commit it to a repo.",
+  "运行环境（软件自带的东西缺没缺）": "Runtime (built-in components present?)",
+  "数据存放目录": "Data folder", "恢复默认": "Reset to default",
+  "绿色版 · 数据跟着文件夹": "Portable · data follows the folder",
+  "安装版": "Installed", "商店版": "Store", "自定义": "Custom",
+  "换位置就把整个软件文件夹移过去": "To move, relocate the whole app folder",
+  "绿色版 · 跟": "Portable · follows ",
+  "（没有）": "(none)", "（空）": "(empty)",
+  "没有选择，保持原样": "No choice — keep as is",
+  "没有线路。用命令行 ": "No lines yet. Use the ",
+  " 添加一条订阅。": " command to add a subscription.",
+  "选择文件…": "Choose file…",
+  "端口，例如 10808": "Port, e.g. 10808",
+  "主界面已打开": "Window is open",
+};
+/* 动态句式：{x} = 一个「连续段」（非中文、非全角标点、非空白的连续字符），
+   按出现顺序回填原文里的对应内容 */
+const EN_PAT = [
+  ["内核 {x} · 软件 {x} 运行", "Lines {x} · Apps {x} running"],
+  ["已打开 {x}", "Opened {x}"],
+  ["每 {x} 小时", "Every {x} h"],
+  ["一键添加本机已装的 {x} 个", "Add all {x} installed apps"],
+  ["删除档案「{x}」？\n\n只删这个档案和它桌面上的快捷方式，程序本身不动。",
+   'Delete profile "{x}"?\n\nOnly this profile and its desktop shortcut are removed — the program itself stays.'],
+  ["本地端口 {x}", "Local port {x}"],
+  ["端口 {x}", "Port {x}"],
+  ["订阅 {x}", "Subscription {x}"],
+  ["{x} · 不经过代理", "{x} · no proxy"],
+  ["已开始更新 {x}", "Started updating {x}"],
+  ["第 {x} 次重试", "retry #{x}"],
+];
+let I18N_LANG = localStorage.getItem("appproxy.lang")
+  || ((navigator.language || "").toLowerCase().startsWith("zh") ? "zh" : "en");
+/* 分段规则与 Python 侧 i18n.py 完全一致：中文+全角标点+空白是边界 */
+const _BLOB_RE = /[^（））：，。、·—｜「」＋？！\s\u4e00-\u9fff]+/g;
+function _normPat(s) {
+  return String(s).replace(/\{x\}/g, "\u0001").replace(_BLOB_RE, "\u0001");
+}
+function trText(s) {
+  if (I18N_LANG !== "en" || s == null) return s;
+  s = String(s);
+  if (EN_DICT[s] != null) return EN_DICT[s];
+  const pat = _normPat(s);
+  for (const [zp, ep] of EN_PAT) {
+    if (_normPat(zp) === pat) {
+      const toks = s.match(_BLOB_RE) || [];
+      let ti = 0;
+      return ep.replace(/\{x\}/g, () => (ti < toks.length ? toks[ti++] : ""));
+    }
+  }
+  return s;
+}
+window.trText = trText;
+const _I18N_ATTRS = ["title", "placeholder", "aria-label"];
+function _i18nWalk() {
+  if (I18N_LANG === "en") {
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const v = n.nodeValue;
+      if (!v || !/[\u4e00-\u9fff]/.test(v)) continue;
+      if (n.__o == null || n.__o !== v) n.__o = v;   // 外部重写了文本 → 刷新原文
+      const t = trText(n.__o);
+      if (t !== v) n.nodeValue = t;
+    }
+  } else {
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      if (n.__o != null) n.nodeValue = n.__o;
+    }
+  }
+  document.body.querySelectorAll("*").forEach(el => {
+    _I18N_ATTRS.forEach(a => {
+      const v = el.getAttribute ? el.getAttribute(a) : null;
+      if (!v || !/[\u4e00-\u9fff]/.test(v)) return;
+      if (el.__w && el.__w[a] === v) return;          // 自己写的回声，别动
+      const t = I18N_LANG === "en" ? trText(v) : v;
+      if (!el.__a) el.__a = {};
+      el.__a[a] = v;
+      if (!el.__w) el.__w = {};
+      el.__w[a] = t;
+      if (t !== v) el.setAttribute(a, t);
+    });
+  });
+  if (/[\u4e00-\u9fff]/.test(document.title)) {
+    if (window.__t0 == null) window.__t0 = document.title;
+    document.title = I18N_LANG === "en" ? trText(window.__t0) : window.__t0;
+  }
+}
+let _i18nBusy = false;
+function _i18nApply() {
+  if (_i18nBusy) return;
+  _i18nBusy = true;
+  try { _i18nWalk(); } finally { _i18nBusy = false; }
+}
+new MutationObserver(_i18nApply)
+  .observe(document.body, {childList: true, subtree: true});
+async function setLang(l) {
+  I18N_LANG = l;
+  localStorage.setItem("appproxy.lang", l);
+  document.documentElement.lang = l === "zh" ? "zh-CN" : "en";
+  _paintLangBtn();
+  _i18nApply();
+  try {
+    await fetch("/api/lang", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({lang: l})});
+  } catch (e) {}
+}
+function _paintLangBtn() {
+  const b = document.getElementById("btn-lang");
+  if (!b) return;
+  b.textContent = I18N_LANG === "zh" ? "EN" : "中";
+  b.title = I18N_LANG === "zh" ? "Switch to English" : "切换到中文";
+}
+document.documentElement.lang = I18N_LANG === "zh" ? "zh-CN" : "en";
+</script>
 
 <script>
 "use strict";
@@ -291,7 +577,7 @@ async function api(path, opt) {
 }
 function toast(msg, ms = 2600) {
   const el = $("#toast");
-  el.textContent = msg;
+  el.textContent = trText(msg);   // 后台动态消息（含报错）在这里统一过翻译
   el.classList.add("show");
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove("show"), ms);
@@ -611,7 +897,7 @@ async function actIcon(id) {
   await refresh(true);
 }
 async function actDelete(p) {
-  if (!confirm(`删除档案「${p.name}」？\n\n只删这个档案和它桌面上的快捷方式，程序本身不动。`)) return;
+  if (!confirm(trText(`删除档案「${p.name}」？\n\n只删这个档案和它桌面上的快捷方式，程序本身不动。`))) return;
   try {
     const r = await api(`/api/profile/${encodeURIComponent(p.id)}`, {method:"DELETE"});
     S.sel = null;
@@ -1454,6 +1740,15 @@ function boot() {
   $("#btn-add").onclick = () => go("apps");
   $("#btn-settings").onclick = () => go("settings");
   $("#btn-settings-top").onclick = () => go("settings");
+  $("#btn-lang").onclick = () => setLang(I18N_LANG === "zh" ? "en" : "zh");
+  _paintLangBtn();
+  // 首次打开（没存过选择）时，把浏览器语言回写后台，托盘菜单跟着默认走
+  if (!localStorage.getItem("appproxy.lang")) {
+    localStorage.setItem("appproxy.lang", I18N_LANG);
+    fetch("/api/lang", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({lang: I18N_LANG})}).catch(() => {});
+  }
   window.addEventListener("hashchange", () => {
     const want = HASH_VIEW[location.hash.replace(/^#/, "")] || "profile";
     if (want !== S.view) go(want);

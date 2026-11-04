@@ -118,12 +118,13 @@ def start() -> str:
         # 用户没地方「右键以管理员身份运行」，不能让他去找。
         elevate.install_with_uac(binary, path)
 
-    # 系统代理必须让路：两者同时开会绕圈，本地页面也容易被送进代理
+    # ★ 2026-11-02 用户硬规定：永不修改系统代理 —— 开 TUN 也不再「让路」。
+    #   只记录当时的状态供 status 展示；若存在旧版备份文件，则做一次还原清理。
     saved = sysproxy.read()
     _write_state({"on": False, "sysproxy": saved if saved.get("enable") else {},
                   "since": int(time.time()), "task": sig})
-    if saved.get("enable"):
-        sysproxy.disable()
+    if sysproxy.load_backup():
+        sysproxy.disable()          # 只在有备份时还原（清理历史残留）
 
     msg = elevate.start()
     _write_state({"on": True, "sysproxy": saved if saved.get("enable") else {},
@@ -135,15 +136,7 @@ def start() -> str:
 def stop(restore_sysproxy: bool = True) -> str:
     st = _read_state()
     msg = elevate.end()
-    if restore_sysproxy and st.get("sysproxy"):
-        # 还原接管前的系统代理（用户可能本来就开着别的代理）
-        try:
-            port = int(sysproxy.parse_server(st["sysproxy"].get("server", ""))[0]
-                       .rsplit(":", 1)[-1])
-            sysproxy.enable(port)
-            msg += "；系统代理已还原"
-        except (ValueError, IndexError, OSError):
-            pass
+    # 我们不再接管系统代理，也就没有「还原」一说；参数保留仅为兼容旧调用。
     _write_state({"on": False, "sysproxy": {}, "since": int(time.time())})
     return msg
 
