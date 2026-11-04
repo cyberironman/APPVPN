@@ -70,6 +70,25 @@ code{font-family:"Cascadia Mono",Consolas,monospace;font-size:11.5px}
 .pip.on{background:var(--green)}
 .empty-side{padding:28px 16px;color:var(--muted);font-size:12px;text-align:center;line-height:1.9}
 
+/* 微信习惯：列表项就是操作入口。悬停出「打开/关闭」，双击直接打开 */
+.qact{flex:0 0 auto;width:24px;height:24px;border-radius:50%;border:1px solid var(--line);
+  background:#fff;color:var(--ink);cursor:pointer;font-size:10px;line-height:1;
+  display:none;align-items:center;justify-content:center;padding:0;margin-left:2px}
+.qact.stop{color:var(--red)}
+.item:hover .qact{display:flex}
+.qact:hover{background:var(--green);border-color:var(--green);color:#fff}
+.qact.stop:hover{background:var(--red);border-color:var(--red)}
+
+/* 详情页「高级设置」折叠区：小白用不到的东西收起来 */
+details.adv{margin-top:14px;border:1px solid var(--line);border-radius:10px;background:#fff}
+details.adv>summary{cursor:pointer;padding:10px 14px;font-size:12.5px;font-weight:600;
+  color:var(--muted);list-style:none;user-select:none}
+details.adv>summary::-webkit-details-marker{display:none}
+details.adv>summary:hover{color:var(--ink)}
+details.adv>summary .chev{display:inline-block;margin-right:6px;transition:transform .15s}
+details.adv[open]>summary .chev{transform:rotate(90deg)}
+details.adv .adv-body{padding:2px 14px 12px}
+
 .side-foot{flex:0 0 auto;border-top:1px solid var(--line);padding:9px 12px;
   display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted)}
 .side-foot .sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -252,11 +271,22 @@ let S = {
 };
 
 /* ---------------- 通信 ---------------- */
+/* 把技术报错翻成人话 + 告诉用户下一步做什么 */
+function humanErr(msg) {
+  const m = String(msg || "");
+  if (/Failed to fetch|NetworkError|net::/.test(m))
+    return "界面和后台断开连接了：把软件关掉重新打开即可";
+  if (/HTTP 5\d\d|Internal Server Error/.test(m))
+    return "软件内部出了点小问题，再试一次；反复出现就到「设置 → 排障与搬家」导出诊断包发给我们";
+  if (/timed? ?out|timeout/i.test(m))
+    return "等了很久没反应，多半是网络不通：先确认这条线路能用，再重试";
+  return m;
+}
 async function api(path, opt) {
   const r = await fetch(path, Object.assign({headers:{"Content-Type":"application/json"}}, opt));
   let body = {};
   try { body = await r.json(); } catch (e) {}
-  if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+  if (!r.ok) throw new Error(humanErr(body.detail) || ("HTTP " + r.status));
   return body;
 }
 function toast(msg, ms = 2600) {
@@ -296,7 +326,7 @@ function renderList() {
   if (!items.length) {
     box.innerHTML = `<div class="empty-side">
       ${(S.data && S.data.profiles.length) ? "没有匹配的软件" :
-        "还没有软件档案<br>点右上角 ＋ 从已安装程序里挑一个"}
+        "还没有软件<br>点右上角 ＋，从常用软件清单里挑一个"}
     </div>`;
     return;
   }
@@ -306,18 +336,39 @@ function renderList() {
     const pend = !p.proxy && p.follows_default;
     // 「常用」小标签：告诉用户这一条是软件开箱就摆好的，不是他自己加的
     const tag = p.preset ? '<span class="tag-common">常用</span>' : "";
+    const sub = p.line_name === "直连（不走代理）" ? "直接打开，不走代理"
+              : esc(p.line_name) + (p.proxy ? " · " + esc(p.proxy) : "");
     return `
-    <div class="item ${p.id === S.sel ? "sel" : ""}" data-id="${esc(p.id)}">
+    <div class="item ${p.id === S.sel ? "sel" : ""}" data-id="${esc(p.id)}" title="点一下看详情，双击直接打开">
       ${avatar(p.id, p.name)}
       <div class="item-body">
         <div class="item-name">${esc(p.name)}${tag}</div>
-        <div class="item-sub${pend ? " pend" : ""}">${esc(p.line_name)}${p.proxy ? " · " + esc(p.proxy) : ""}</div>
+        <div class="item-sub${pend ? " pend" : ""}">${sub}</div>
       </div>
+      <button class="qact ${p.alive ? "stop" : ""}" data-qact="${esc(p.id)}"
+              title="${p.alive ? "关闭" : "打开"}">${p.alive ? "■" : "▶"}</button>
       <span class="pip ${p.alive ? "on" : ""}"></span>
     </div>`;
   }).join("");
   box.querySelectorAll(".item").forEach(el => {
-    el.onclick = () => { S.sel = el.dataset.id; S.view = "profile"; renderAll(); };
+    const id = el.dataset.id;
+    el.onclick = () => { S.sel = id; S.view = "profile"; renderAll(); };
+    // 微信习惯：双击 = 直接打开。启动/关闭的入口不做深，列表上一键可达。
+    el.ondblclick = (e) => {
+      if (e.target.closest(".qact")) return;
+      const p = ((S.data && S.data.profiles) || []).find(x => x.id === id);
+      if (p && !p.alive) { S.sel = id; S.view = "profile"; actStart(id); }
+    };
+  });
+  box.querySelectorAll(".qact").forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const id = b.dataset.qact;
+      const p = ((S.data && S.data.profiles) || []).find(x => x.id === id);
+      if (!p) return;
+      if (p.alive) { S.sel = id; S.view = "profile"; actStop(id); }
+      else { S.sel = id; S.view = "profile"; actStart(id); }
+    };
   });
 }
 
@@ -350,9 +401,9 @@ function renderMain() {
     const n = S.data.profiles.length;
     m.innerHTML = `<div class="blank">
       <div class="big">◎</div>
-      <h2>${n ? "选一个软件看详情" : "还没有软件档案"}</h2>
+      <h2>${n ? "选一个软件看详情" : "还没有软件"}</h2>
       <p>${n ? "左边点一下就切过去了。" :
-        "一个档案 = 一个程序 + 一条线路 + 一份独立数据目录。同一个程序可以建多个档案，各走各的代理，图标也不一样。"}</p>
+        "在这里添加的每个软件都带着自己的线路和独立数据：可以同一个软件开好几个、各走各的代理、互不干扰。桌面图标也会帮你建好。"}</p>
     </div>`;
     return;
   }
@@ -372,7 +423,7 @@ function renderMain() {
         ${p.web ? `
         <button class="btn btn-primary" id="act-start" ${p.alive || isBusy ? "disabled" : ""}
                 title="在专属浏览器窗口里打开网页版，数据独立、走绑定的线路">
-          ${isBusy ? '<span class="spin"></span>连接中…' : (p.alive ? "已启动" : "启动网页版")}
+          ${isBusy ? '<span class="spin"></span>正在打开…' : (p.alive ? "已打开" : "启动网页版")}
         </button>
         <button class="btn btn-ghost" id="act-start-client" ${p.alive || isBusy ? "disabled" : ""}
                 title="${p.client_found === false ? "本机还没装桌面客户端，点按后会告诉你官网地址" : "启动安装好的桌面客户端，同样走绑定的线路、用独立数据"}">
@@ -380,7 +431,7 @@ function renderMain() {
         </button>
         ` : `
         <button class="btn btn-primary" id="act-start" ${p.alive || isBusy ? "disabled" : ""}>
-          ${isBusy ? '<span class="spin"></span>连接中…' : (p.alive ? "已启动" : "启动")}
+          ${isBusy ? '<span class="spin"></span>正在打开…' : (p.alive ? "已打开" : "启动")}
         </button>
         `}
         <button class="btn btn-ghost" id="act-stop" ${!p.alive || isStop ? "disabled" : ""}>
@@ -397,13 +448,27 @@ function renderMain() {
               跟着默认线路走（推荐）</option>
             <option value="" ${p.line_id === "" ? "selected" : ""}>不经过代理（直连）</option>
             ${(S.data.lines || []).map(l => `<option value="${esc(l.id)}" ${l.id === p.line_id ? "selected" : ""}>
-              ${esc(l.name)} · ${l.http_port}${l.running ? "（内核在跑）" : ""}</option>`).join("")}
+              ${esc(l.name)} · ${l.http_port}${l.running ? "（已连接）" : ""}</option>`).join("")}
           </select>
           ${p.line_id === "@default"
             ? `<div style="font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.7">
                  换线路不用回来改这里 —— 改「默认线路」，这一批一起动。</div>`
             : ""}
         </div></div>
+        <div class="row"><label>这是什么效果</label><div class="val">
+          <div style="font-size:12px;color:var(--muted);line-height:1.8">
+            点上面的按钮打开${p.web ? "网页版（独立浏览器窗口）" : "这个软件"}，
+            ${p.line_id === "" ? "不挂代理、直接连。"
+              : (line ? `自动走「${esc(line.name)}」这条线路，登录状态存在自己专属的数据里，和你平时用的浏览器互不干扰。`
+                      : `还没选线路：先在设置里添加一条线路，再回到这里选上，打开时就会自动走它。`)}
+          </div>
+        </div></div>
+      </div>
+
+      <details class="adv">
+        <summary><span class="chev">▶</span>高级设置（程序路径 / 数据 / 线路详情 / 日志）</summary>
+        <div class="adv-body">
+        <div class="rows">
         <div class="row"><label>程序</label><div class="val"><code>${esc(p.exe)}</code></div></div>
         <div class="row"><label>数据隔离</label><div class="val">
           <select id="sel-iso">
@@ -415,35 +480,38 @@ function renderMain() {
             ${p.iso_mode === "none" ? "⚠ " : ""}${esc(p.iso_note || "")}
           </div>
         </div></div>
-        <div class="row"><label>数据目录</label><div class="val"><code>${esc(p.data_dir)}</code></div></div>
+        <div class="row"><label>数据目录</label><div class="val"><code>${esc(p.data_dir)}</code>
+          <div style="font-size:11.5px;color:var(--warn);margin-top:5px;line-height:1.7">登录数据都在这里：<b>别搬动、别删除</b>这个文件夹，否则要重新登录。</div>
+        </div></div>
         <div class="row"><label>图标</label><div class="val">
           <button class="btn btn-ghost btn-sm" id="act-icon">重做图标与快捷方式</button>
         </div></div>
         <div class="row"><label>删除</label><div class="val">
-          <button class="btn btn-danger btn-sm" id="act-del">删除这个档案</button>
-          <span style="color:var(--muted);font-size:11.5px;margin-left:8px">只删档案，不动程序本身</span>
+          <button class="btn btn-danger btn-sm" id="act-del">删除这个软件</button>
+          <span style="color:var(--muted);font-size:11.5px;margin-left:8px">只删这条配置，不动软件本身</span>
         </div></div>
-      </div>
+        </div>
 
-      <div class="sec-title">代理链路</div>
-      ${line ? `<div class="kernel">
+        <div class="sec-title">线路连接详情</div>
+        ${line ? `<div class="kernel">
         <span class="name">${esc(line.name)}</span>
-        <span class="meta">端口 ${line.http_port}${line.socks_port ? " / socks " + line.socks_port : ""} · ${esc(line.engine)}</span>
+        <span class="meta">本地端口 ${line.http_port}${line.socks_port ? " / " + line.socks_port : ""} · ${esc(line.engine)}</span>
         <span class="grow"></span>
-        ${line.running ? '<span class="badge on"><i></i>内核运行中</span>'
-                       : '<span class="badge off"><i></i>内核未启动</span>'}
+        ${line.running ? '<span class="badge on"><i></i>已连接</span>'
+                       : '<span class="badge off"><i></i>未连接</span>'}
         <button class="btn btn-ghost btn-sm" data-line="${esc(line.id)}" data-act="${line.running ? "lstop" : "lstart"}">
-          ${line.running ? "停内核" : "起内核"}</button>
+          ${line.running ? "断开" : "连接"}</button>
       </div>` : `<div class="kernel" style="color:var(--muted)">
-        直连档案：启动时不连任何代理，也不占用内核。
+        这个软件不走代理，打开就是直连。
       </div>`}
       ${line ? `<div style="font-size:11.5px;color:var(--muted);margin-top:7px;line-height:1.7">
-        内核是按需的：这个软件的启动才会拉起它；软件关掉、也没别的软件在用这条线路时，
-        内核会自动退场。手动在这里起的内核不会被自动停掉。
+        连接是按需的：打开软件时会自动连上；软件关掉、也没别的软件在用这条线路时，会自动断开省资源。手动连上的不会被自动断开。
       </div>` : ""}
 
-      <div class="sec-title">最近日志</div>
-      <div class="logbox"><pre id="d-log">读取中…</pre></div>
+        <div class="sec-title">最近日志（排查问题才需要看）</div>
+        <div class="logbox"><pre id="d-log">读取中…</pre></div>
+        </div>
+      </details>
     </div>
   </div>`;
 
@@ -493,8 +561,8 @@ function paintDetail() {
   const start = $("#act-start"), stop = $("#act-stop");
   if (start) {
     start.disabled = p.alive || !!S.busy["start:" + p.id];
-    start.innerHTML = S.busy["start:" + p.id] ? '<span class="spin"></span>连接中…'
-                      : (p.alive ? "已启动" : (p.web ? "启动网页版" : "启动"));
+    start.innerHTML = S.busy["start:" + p.id] ? '<span class="spin"></span>正在打开…'
+                      : (p.alive ? "已打开" : (p.web ? "启动网页版" : "启动"));
   }
   const startClient = $("#act-start-client");
   if (startClient) {
@@ -925,7 +993,7 @@ function viewSettings() {
         （一个专属浏览器窗口，点开直达，跟你平时的浏览器互不干扰）。
         <b>不带任何软件本体</b>，也不会往桌面塞快捷方式。<br>
         它们绑的是「跟着默认线路走」，所以你导入订阅之后会自动挂上，不用回来一个个改；
-        还没有线路时左侧那一行会显示琥珀色的「待选线路」。删掉的不会自己长回来 ——
+        还没有线路时左侧那一行会显示琥珀色的「还没选线路」。删掉的不会自己长回来 ——
         想要就点上面那个按钮补。
       </div>
     </div>

@@ -860,7 +860,7 @@ def cmd_preset(reg: Registry, a) -> int:
                   key=lambda p: order.get(p.id, 999))
     for p in rows:
         line = reg.resolve(p.line_id)
-        where = line.name if line else "待选线路（跟着默认线路走）"
+        where = line.name if line else "还没选线路（跟着默认线路走）"
         print(f"  {p.id:12} {p.name:14} {where}")
     if st["missing"]:
         print(f"  缺：{'、'.join(x['name'] for x in st['missing'])}")

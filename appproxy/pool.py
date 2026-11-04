@@ -423,8 +423,8 @@ def state(reg: Registry | None = None, store: ProfileStore | None = None) -> dic
             "exe": p.exe,
             "line_id": p.line_id,
             "line_name": (line.name if line else
-                          ("直连" if not p.line_id else
-                           ("待选线路" if reg.is_following_default(p.line_id)
+                          ("直连（不走代理）" if not p.line_id else
+                           ("还没选线路" if reg.is_following_default(p.line_id)
                             else p.line_id))),
             "follows_default": reg.is_following_default(p.line_id),
             "preset": bool(p.preset),

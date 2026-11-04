@@ -152,7 +152,7 @@ def test_state_direct_profile_has_no_proxy(tmp_home, monkeypatch):
     monkeypatch.setattr(procwatch, "snapshot", lambda: procwatch.Snapshot())
     st = pool.state()
     assert st["profiles"][0]["proxy"] == ""
-    assert st["profiles"][0]["line_name"] == "直连"
+    assert st["profiles"][0]["line_name"] == "直连（不走代理）"
 
 
 # --------------------------------------------------------------------------- 回收判断
