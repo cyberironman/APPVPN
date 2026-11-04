@@ -40,9 +40,52 @@ def launcher_arguments(profile_id: str) -> str:
     return selfrun.self_args(["profile", "launch", profile_id])
 
 
+def _pylnk3_write(lnk: Path, target: Path, arguments: str, working_dir: str,
+                  icon: str, description: str) -> None:
+    """用 pylnk3 直接写 lnk（不经过系统 COM，路径按字面写入）。
+
+    三个坑都踩过：① HasLinkInfo 等标志位默认是关的，不开的话目标路径根本
+    不会写进文件，双击毫无反应；② specify_local_location 不传 drive_type
+    的话 drive_serial 是空串，save 直接 struct.error；③ local_base_path
+    只支持 ANSI，中文路径会 UnicodeEncodeError —— 中文只能进 Unicode 的
+    arguments 字段（比如「记事本 + 中文文件名」这种组合）。
+    """
+    import pylnk3  # type: ignore
+    item = pylnk3.Lnk()
+    flags = item.link_flags
+    flags.HasLinkInfo = True
+    flags.HasName = True
+    flags.HasWorkingDir = True
+    if arguments:
+        flags.HasArguments = True
+    flags.HasIconLocation = True
+    flags.IsUnicode = True
+    item.specify_local_location(str(target), drive_type=pylnk3.DRIVE_FIXED,
+                                drive_serial=0x12345678, volume_label="APP")
+    item.description = description or lnk.stem
+    item.working_dir = working_dir or str(target.parent)
+    if arguments:
+        item.arguments = arguments
+    item.icon = icon or str(target)
+    item.icon_index = 0
+    item.save(str(lnk))
+
+
+def _lnk_target_is_local(lnk: Path) -> bool:
+    """读回 lnk 的目标路径，判断是否为可用的本地路径（非 UNC、非空）。"""
+    try:
+        import pylnk3  # type: ignore
+        path = str(getattr(pylnk3.parse(str(lnk)), "path", "") or "")
+        return bool(path) and not path.startswith("\\\\")
+    except Exception:  # noqa: BLE001  读不回就当它坏了
+        return False
+
+
 def create_lnk(lnk: Path, target: Path, arguments: str = "", working_dir: str = "",
                icon: str = "", description: str = "") -> Path:
-    """写一个 .lnk。优先用系统 COM，失败再退回 pylnk3。"""
+    """写一个 .lnk。优先用系统 COM，写完回读校验；失败或写歪（如被环境
+    解析成 \\机器名\盘符 的网络路径）就用 pylnk3 按字面路径重写。
+    """
     lnk = Path(lnk)
     lnk.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -58,23 +101,15 @@ def create_lnk(lnk: Path, target: Path, arguments: str = "", working_dir: str = 
         sc.Description = description or lnk.stem
         sc.WindowStyle = 1
         sc.Save()
-        return lnk
-    except Exception as com_err:  # noqa: BLE001  COM 不可用时兜底
-        try:
-            import pylnk3  # type: ignore
-            item = pylnk3.Lnk()
-            try:
-                item.specify_local_location(str(target))
-            except Exception:  # noqa: BLE001  老版本没有这个方法
-                pass
-            item.description = description or lnk.stem
-            item.arguments = arguments
-            item.working_dir = working_dir or str(Path(target).parent)
-            item.save(str(lnk))
+        if _lnk_target_is_local(lnk):
             return lnk
-        except Exception as plain_err:  # noqa: BLE001
-            raise RuntimeError(f"建快捷方式失败：COM（{com_err}）/ pylnk3（{plain_err}）") \
-                from plain_err
+        # COM 成功但目标被解析成了 UNC（沙箱/映射盘环境），不能交付
+    except Exception:  # noqa: BLE001  COM 不可用或校验不过，走 pylnk3
+        pass
+    _pylnk3_write(lnk, target, arguments, working_dir, icon, description)
+    if not _lnk_target_is_local(lnk):
+        raise RuntimeError(f"快捷方式写完仍不是有效本地路径：{lnk}")
+    return lnk
 
 
 def _label(profile) -> str:
