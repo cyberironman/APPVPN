@@ -77,6 +77,7 @@ class Snapshot:
     def __init__(self) -> None:
         self.by_exe: dict[str, list[int]] = defaultdict(list)
         self.by_data_dir: dict[str, list[int]] = defaultdict(list)
+        self.by_name: dict[str, list[int]] = defaultdict(list)
         self.cmdline: dict[int, str] = {}
 
     def alive(self, profile: AppProfile) -> bool:
@@ -86,6 +87,15 @@ class Snapshot:
         if profile.resolved_kind == "chromium":
             key = _norm(profile.data_path())
             return list(self.by_data_dir.get(key) or [])
+        # 商店版等拿不到稳定 exe 路径的档案：按进程名匹配（watch 字段）。
+        # WindowsApps 里的进程对普通用户常常连 exe 路径都查不到（AccessDenied），
+        # 但进程名一般是可读的。
+        names = {n.strip().lower() for n in (profile.watch or "").split(",") if n.strip()}
+        if names:
+            out: list[int] = []
+            for n in names:
+                out.extend(self.by_name.get(n if n.endswith(".exe") else n + ".exe") or [])
+            return out
         return list(self.by_exe.get(_norm(profile.exe)) or [])
 
 
@@ -106,6 +116,8 @@ def snapshot() -> Snapshot:
             exe = info["exe"]
             if exe:
                 snap.by_exe[_norm(exe)].append(p.pid)
+            if name:
+                snap.by_name[name.lower()].append(p.pid)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     return snap

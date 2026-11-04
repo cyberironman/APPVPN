@@ -547,15 +547,22 @@ def line_terminal(lid: str) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- 程序库
-def _spawn(base: str, name: str, exe: str, line_id: str, url: str) -> dict[str, Any]:
+def _spawn(base: str, name: str, exe: str, line_id: str, url: str,
+           kind: str = "", watch: str = "") -> dict[str, Any]:
     """建一个档案 + 图标 + 快捷方式。已存在同名 id 时自动加后缀。"""
     store = _store()
     # 判重只看「同一个东西」：带目标网址的档案（网页版）按网址比，
     # 不带的（桌面版）按 exe 比。两者不能混着比 —— 网页版档案的 exe
     # 也是 chrome.exe，混着比会让「加 Chrome」被误判成「已经加过」。
+    # 商店版档案 exe 是 shell: URI，跟网页版共用同一个 web 地址是正常的
+    # （网址留给「启动网页版」），所以商店版只按 exe 比。
     # 换一条线路永远允许：「同一个软件走两条线」本来就是这产品的核心用法。
     for p in store.profiles:
         if (p.line_id or "") != (line_id or ""):
+            continue
+        if kind == "store" or p.kind == "store":
+            if exe and p.exe.lower() == str(exe).lower():
+                return {"id": p.id, "name": p.name, "made": [], "dup": True}
             continue
         if url or p.url:
             if url and p.url and url.rstrip("/").lower() == p.url.rstrip("/").lower():
@@ -566,7 +573,7 @@ def _spawn(base: str, name: str, exe: str, line_id: str, url: str) -> dict[str, 
 
     prof = AppProfile(id=store.unique_id(profiles.slug(base) or "app"),
                       name=name or Path(exe).stem, exe=str(exe),
-                      line_id=line_id, url=url)
+                      line_id=line_id, url=url, kind=kind, watch=watch)
     store.upsert(prof)
     store.save()
     made: list[str] = []
@@ -607,6 +614,20 @@ def _add_from_item(item: dict[str, Any], line_id: str,
                     "message": f"{name} 已经加过了（同一条线路）"}
         return {"ok": True, "kind": "exe", **r,
                 "message": f"已添加 {name}（桌面版）"}
+
+    # 商店版：清单声明了 PackageFamilyName 且本机装了（用户级注册表可查）
+    # → 用 shell: URI 建档，由系统激活；代理靠应用内的代理设置指向线路端口。
+    family = (item.get("store_family") or "").strip()
+    if family and not force_web and appfind.store_installed(family):
+        uri = f"shell:AppsFolder\\{family}!App"
+        r = _spawn(key, name, uri, line_id, web, kind="store",
+                   watch=item.get("watch") or "")
+        if r["dup"]:
+            return {"ok": True, "kind": "store", **r,
+                    "message": f"{name} 已经加过了（同一条线路）"}
+        return {"ok": True, "kind": "store", **r,
+                "message": f"已添加 {name}（商店版）。代理要在应用内设置一次："
+                           f"设置 → 隐私 → 代理，填线路的本地地址和端口"}
 
     if web and (force_web or not has_desktop):
         br = appfind.browser(table)
@@ -702,7 +723,7 @@ def apps_add_batch(body: BatchAdd) -> dict[str, Any]:
                 continue
             try:
                 r = _add_from_item(item, body.line_id)
-                name = f"{r['name']}（{'桌面版' if r['kind'] == 'exe' else '网页版'}）"
+                name = f"{r['name']}（{'桌面版' if r['kind'] == 'exe' else ('商店版' if r['kind'] == 'store' else '网页版')}）"
                 (dup if r.get("dup") else names).append(name)
                 added.append(key)
             except HTTPException as e:

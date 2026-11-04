@@ -959,7 +959,8 @@ function appsSuggestBody() {
       ? '<span class="badge warn" title="' + esc(r.why) + '">需代理</span>'
       : '<span class="badge off" title="' + esc(r.why) + '">常需要</span>';
     let sub;
-    if (r.found) sub = r.exe;
+    if (r.found && r.kind !== "store") sub = r.exe;
+    else if (r.kind === "store") sub = "微软商店版，点「加商店版」即可（代理在应用内设置）";
     else if (r.kind === "web") sub = r.web;
     else if (r.badge === "商店版") sub = "装的是微软商店版，不接受代理参数";
     else sub = "本机未安装";
@@ -967,6 +968,8 @@ function appsSuggestBody() {
     if (r.have) right = '<span class="badge off">已添加</span>';
     else if (r.kind === "exe")
       right = `<button class="btn btn-ghost btn-sm" data-add-key="${esc(r.key)}">添加</button>`;
+    else if (r.kind === "store")
+      right = `<button class="btn btn-ghost btn-sm" data-add-key="${esc(r.key)}" title="本机装的是商店版：建档后代理要在应用内设置一次">加商店版</button>`;
     else if (r.kind === "web")
       right = `<button class="btn btn-ghost btn-sm" data-add-web="${esc(r.key)}">加网页快捷方式</button>`;
     else {

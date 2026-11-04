@@ -86,6 +86,15 @@ def launch(profile: profiles.AppProfile, reg: Registry, *, dry_run: bool = False
             log(f"    env {k}={v or '<清空>'}")
         return 0
 
+    # 微软商店版：shell: URI 不是文件，走系统 ShellExecute 激活。
+    # 探活按档案的 watch 进程名来（procwatch），不看 exe 路径。
+    if p.kind == "store":
+        os.startfile(p.argv[0])
+        if line and not no_core:
+            # 等真身进程出现：商店版「按需回收」判定靠它兜底
+            wait_for_process(profile, timeout=20.0)
+        return 0
+
     if not Path(p.argv[0]).is_file():
         raise RuntimeError(f"找不到程序：{p.argv[0]}")
 

@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from . import selfrun, settings
@@ -51,6 +52,13 @@ def _pylnk3_write(lnk: Path, target: Path, arguments: str, working_dir: str,
     arguments 字段（比如「记事本 + 中文文件名」这种组合）。
     """
     import pylnk3  # type: ignore
+    # Windows 外壳的 LinkInfo.LocalBasePath 只认反斜杠；路径里混进正斜杠
+    # （Git Bash / 某些 pathlib 场景会产生）双击就会弹「没有关联的应用」。
+    # 写入前统一 normpath 归一，icon、working_dir 同理。
+    norm = lambda s: os.path.normpath(s) if s else s  # noqa: E731
+    target = Path(norm(str(target)))
+    icon = norm(icon)
+    working_dir = norm(working_dir or str(target.parent))
     item = pylnk3.Lnk()
     flags = item.link_flags
     flags.HasLinkInfo = True
@@ -71,14 +79,44 @@ def _pylnk3_write(lnk: Path, target: Path, arguments: str, working_dir: str,
     item.save(str(lnk))
 
 
-def _lnk_target_is_local(lnk: Path) -> bool:
-    """读回 lnk 的目标路径，判断是否为可用的本地路径（非 UNC、非空）。"""
+def _lnk_local_base(lnk: Path) -> str:
+    r"""纯结构解析 LinkInfo.LocalBasePath（不依赖 pylnk3 的宽容回读）。
+
+    沙箱里 COM 会把 D:\ 解析成 \\主机名\盘 的 UNC，LocalBasePath 只剩
+    残缺的「D:\」—— pylnk3 回读照样是个非空字符串，拦不住；必须按
+    [MS-SHLLINK] 字节结构自己抠出来看。
+    """
     try:
-        import pylnk3  # type: ignore
-        path = str(getattr(pylnk3.parse(str(lnk)), "path", "") or "")
-        return bool(path) and not path.startswith("\\\\")
+        d = Path(lnk).read_bytes()
+        if len(d) < 76 or d[:4] != b"L\x00\x00\x00":
+            return ""
+        flags = int.from_bytes(d[20:24], "little")
+        off = 76
+        if flags & 0x1:  # HasTargetIDList
+            off += 2 + int.from_bytes(d[off:off + 2], "little")
+        if not (flags & 0x2):  # HasLinkInfo
+            return ""
+        lbpo = int.from_bytes(d[off + 16:off + 20], "little")
+        if not lbpo:
+            return ""
+        raw = d[off + lbpo:].split(b"\x00")[0]
+        return raw.decode("mbcs", "replace")
     except Exception:  # noqa: BLE001  读不回就当它坏了
+        return ""
+
+
+def _lnk_target_is_local(lnk: Path) -> bool:
+    """判断 lnk 的目标是否为可用的本地路径。
+
+    三种坏形态都拒收：UNC（\\机器名\盘）、正斜杠（D:/x/y.exe，Windows
+    外壳不认，双击就是「没有关联的应用」）、裸盘根残缺路径（D:\，
+    COM 被 UNC 化的典型残骸）。
+    """
+    path = _lnk_local_base(lnk)
+    if not path or "/" in path or path.startswith("\\\\"):
         return False
+    drive, rest = os.path.splitdrive(path)
+    return bool(drive) and rest not in ("", "\\", "/")
 
 
 def create_lnk(lnk: Path, target: Path, arguments: str = "", working_dir: str = "",

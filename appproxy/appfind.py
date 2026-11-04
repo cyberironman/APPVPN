@@ -298,6 +298,26 @@ def store_only(names: Iterable[str],
     return None
 
 
+def store_installed(family: str) -> bool:
+    """商店版应用（按 PackageFamilyName）装没装。
+
+    WindowsApps 目录枚举不可靠（ACL），改看注册表：每个「装给当前用户」
+    的商店包都会在 HKCU 的 AppModel\\SystemAppData 下留一个以
+    PackageFamilyName 命名的键，读它不用任何权限，也不会误判成没装。
+    """
+    family = (family or "").strip()
+    if not family:
+        return False
+    try:
+        import winreg
+        key = (r"Software\Classes\Local Settings\Software\Microsoft"
+               r"\Windows\CurrentVersion\AppModel\SystemAppData" "\\" + family)
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_READ):
+            return True
+    except OSError:
+        return False
+
+
 # 「网页版」条目要建浏览器档案时，按这个顺序挑一个本机有的
 BROWSER_ORDER = ("chrome.exe", "msedge.exe", "brave.exe", "vivaldi.exe",
                  "chromium.exe", "firefox.exe")

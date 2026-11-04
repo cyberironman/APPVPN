@@ -29,6 +29,8 @@ def env(tmp_home, tmp_path, monkeypatch):
 
     monkeypatch.setattr(appfind, "load", lambda force=False: table)
     monkeypatch.setattr(appfind, "clear", lambda: None)
+    # 测试环境当作没装任何商店版（注册表是机器真实状态，必须隔离）
+    monkeypatch.setattr(appfind, "store_installed", lambda family: False)
     # 测试不写桌面、不画图标
     monkeypatch.setattr(icons, "available", lambda: False)
     monkeypatch.setattr(shortcut, "install", lambda p, **kw: [])
@@ -151,3 +153,59 @@ def test_open_url_rejects_non_http(env, monkeypatch):
     r = env.client.post("/api/open-url", json={"url": "https://telegram.org/dl/desktop/win64"})
     assert r.status_code == 200
     assert called == ["https://telegram.org/dl/desktop/win64"]
+
+
+def test_add_store_app_creates_store_profile(env, monkeypatch):
+    """本机只装了商店版 WhatsApp —— 一键建档成 shell: 激活，不再报「去官网装」。"""
+    monkeypatch.setattr(appfind, "store_installed", lambda family: (
+        family == "5319275A.WhatsAppDesktop_cv1g1gvanyjgm"))
+    r = env.client.post("/api/apps/add", json={"key": "whatsapp"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "store"
+    profs = _profiles()
+    assert len(profs) == 1
+    assert profs[0].exe == ("shell:AppsFolder\\"
+                            "5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App")
+    assert profs[0].kind == "store"
+    assert profs[0].watch == "whatsapp.root.exe"
+    assert profs[0].url == "https://web.whatsapp.com/"   # 网页版入口保留
+
+
+def test_add_store_app_dup_not_blocked_by_web_profile(env, monkeypatch):
+    """同一线路已有网页版档案时，商店版仍能单独添加（按 exe 判重，不按网址）。"""
+    r = env.client.post("/api/apps/add", json={"key": "whatsapp", "web": True})
+    assert r.status_code == 200
+    monkeypatch.setattr(appfind, "store_installed", lambda family: (
+        family == "5319275A.WhatsAppDesktop_cv1g1gvanyjgm"))
+    r2 = env.client.post("/api/apps/add", json={"key": "whatsapp"})
+    assert r2.status_code == 200
+    assert r2.json()["kind"] == "store"
+    assert len(_profiles()) == 2
+
+
+def test_add_store_app_creates_store_profile(env, monkeypatch):
+    """本机只装了商店版 WhatsApp —— 一键建档成 shell: 激活，不再报「去官网装」。"""
+    monkeypatch.setattr(appfind, "store_installed", lambda family: (
+        family == "5319275A.WhatsAppDesktop_cv1g1gvanyjgm"))
+    r = env.client.post("/api/apps/add", json={"key": "whatsapp"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "store"
+    profs = _profiles()
+    assert len(profs) == 1
+    assert profs[0].exe == ("shell:AppsFolder\\"
+                            "5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App")
+    assert profs[0].kind == "store"
+    assert profs[0].watch == "whatsapp.root.exe"
+    assert profs[0].url == "https://web.whatsapp.com/"   # 网页版入口保留
+
+
+def test_add_store_app_dup_not_blocked_by_web_profile(env, monkeypatch):
+    """同一线路已有网页版档案时，商店版仍能单独添加（按 exe 判重，不按网址）。"""
+    r = env.client.post("/api/apps/add", json={"key": "whatsapp", "web": True})
+    assert r.status_code == 200
+    monkeypatch.setattr(appfind, "store_installed", lambda family: (
+        family == "5319275A.WhatsAppDesktop_cv1g1gvanyjgm"))
+    r2 = env.client.post("/api/apps/add", json={"key": "whatsapp"})
+    assert r2.status_code == 200
+    assert r2.json()["kind"] == "store"
+    assert len(_profiles()) == 2

@@ -157,7 +157,7 @@ class AppProfile:
     name: str
     exe: str
     line_id: str = ""            # 绑定的线路 id；留空 = 直连（不走代理）
-    kind: str = "auto"           # auto / chromium / generic
+    kind: str = "auto"           # auto / chromium / generic / store
     data_dir: str = ""           # 档案独立数据目录；留空则用 apps/<id>/data
     args: list[str] = field(default_factory=list)
     url: str = ""                # 启动后打开的地址（浏览器常用）
@@ -167,13 +167,15 @@ class AppProfile:
     isolate: str = "auto"        # auto / full / off —— 多开时怎么隔离用户数据
     preset: bool = False         # 首次启动自动建的（用户删了就不再长回来）
     client_exe: str = ""         # 网页版档案对应的桌面客户端路径（找不到就现场搜）
+    watch: str = ""              # 探活用的进程名（商店版拿不到稳定 exe 路径，
+                                 # 按进程名匹配；逗号分隔可给多个）
 
     def __post_init__(self) -> None:
         self.id = slug(self.id)
         self.name = self.name or self.id
         self.kind = (self.kind or "auto").lower()
-        if self.kind not in ("auto", "chromium", "generic"):
-            raise ValueError(f"kind 只能是 auto / chromium / generic：{self.kind}")
+        if self.kind not in ("auto", "chromium", "generic", "store"):
+            raise ValueError(f"kind 只能是 auto / chromium / generic / store：{self.kind}")
         self.isolate = (self.isolate or "auto").lower()
         if self.isolate not in ISOLATE_MODES:
             self.isolate = "auto"
@@ -201,6 +203,9 @@ class AppProfile:
         return Path(self.exe)
 
     def exists(self) -> bool:
+        # shell: URI（商店版应用）不是文件路径，交给系统的 ShellExecute 去验证
+        if self.exe.lower().startswith("shell:"):
+            return True
         return self.exe_path().is_file()
 
     def short_code(self) -> str:
@@ -280,6 +285,17 @@ def plan(profile: AppProfile, line: Line | None = None,
     env: dict[str, str] = {}
     argv = [exe]
 
+    # 微软商店版：shell: URI 交给系统激活。塞不进 --proxy-server，也没有
+    # 可写的用户数据目录 —— 但 WhatsApp 这类应用自带「应用内代理」设置，
+    # 让用户在应用里填线路的本地端口即可（还顺带绕开了系统代理红线）。
+    if kind == "store":
+        return LaunchPlan(
+            argv=argv, env=env, cwd="",
+            proxy=proxy, kind="store",
+            iso_mode="none",
+            iso_note="微软商店版：代理在本软件的应用内设置（如 设置 → 隐私 → 代理，"
+                     "填这条线路的本地端口），数据由系统自己管理")
+
     # 隔离按「真正会跑的那个程序」算：网页版档案开客户端时，
     # 要看客户端 exe 认不认数据目录参数，不是看浏览器。
     iso = isolation(exe, kind)
@@ -316,8 +332,10 @@ def plan(profile: AppProfile, line: Line | None = None,
             env[key] = proxy
 
     argv.extend(profile.args)
-    if profile.url and variant != "client":
-        # 网址只给浏览器：开客户端时把网页地址塞给它只会弹个没用的窗口
+    # 网址只给浏览器；但参数里已经带了同一个地址（比如 --app=<url> 独立窗口）
+    # 时不要再追加，否则 Chrome 会同时开一个应用窗口和一个普通标签页。
+    if profile.url and variant != "client" \
+            and not any(profile.url in a for a in argv):
         argv.append(profile.url)
 
     return LaunchPlan(argv=argv, env=env, cwd=str(Path(exe).parent),

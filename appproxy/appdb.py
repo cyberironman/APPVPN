@@ -151,19 +151,29 @@ def suggest(have_exes: set[str] | None = None,
         web = item.get("web") or ""
         br_exe = br or ""
         can_web = bool(web and br_exe)
+        # 商店版（PackageFamilyName）：桌面 exe 找不到、但商店包装了，
+        # 也能「点一下就加」—— 用 shell: URI 建档，系统自己激活。
+        family = (item.get("store_family") or "").strip()
+        store_ok = bool(family) and appfind.store_installed(family)
+        shell_uri = f"shell:AppsFolder\\{family}!App" if store_ok else ""
 
         # 三种形态，决定了界面上那个按钮是什么：
         #   exe —— 本机有桌面版，点一下就建快捷方式
+        #   store —— 本机装的是商店版，点一下建商店版档案
         #   web —— 本来就是网页服务（Facebook / YouTube），建专属浏览器图标
         #   ""  —— 有桌面版但本机没装，按钮是「去官网安装」（装完回来再点）
         if exe:
             kind = "exe"
+        elif store_ok:
+            kind = "store"
         elif not exes and can_web:
             kind = "web"
         else:
             kind = ""
 
-        have_it = (exe.lower() in have) if exe else (web.rstrip("/").lower() in haurl)
+        have_it = ((exe.lower() in have) if exe
+                   else (shell_uri.lower() in have if shell_uri else False)
+                   or (web.rstrip("/").lower() in haurl))
         badge = "" if (exe or can_web) else ("商店版" if store else "未安装")
         out.append({
             "key": item.get("key") or "",
@@ -173,8 +183,8 @@ def suggest(have_exes: set[str] | None = None,
             "why": item.get("why") or "",
             "download": item.get("download") or "",
             "web": web,
-            "exe": exe or "",
-            "found": bool(exe),
+            "exe": exe or shell_uri,
+            "found": bool(exe or store_ok),
             "store": store,
             "kind": kind,
             "can_web": can_web,
